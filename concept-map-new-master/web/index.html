@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>概念图自动生成系统</title>
+    <link rel="stylesheet" href="/web/styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- 头部标题 -->
+        <header class="header">
+            <h1>概念图自动生成系统</h1>
+            <p>基于AI的智能概念图生成与编辑平台</p>
+        </header>
+
+        <!-- 主要内容区域 -->
+        <main class="main-content">
+            <!-- 顶部功能选择区域（标签页形式） -->
+            <section class="function-bar">
+                <h2 class="function-bar-title">功能选择</h2>
+                <div class="function-tabs">
+                    <button class="function-tab active" data-tab="misconception">
+                        <span class="tab-icon">🔬</span>
+                        <span class="tab-label">迷思概念探查</span>
+                    </button>
+                    <button class="function-tab" data-tab="keyword">
+                        <span class="tab-icon">🔍</span>
+                        <span class="tab-label">焦点问题生成</span>
+                    </button>
+                    <button class="function-tab" data-tab="description">
+                        <span class="tab-icon">📝</span>
+                        <span class="tab-label">文本分析生成</span>
+                    </button>
+                    <button class="function-tab" data-tab="image-generation">
+                        <span class="tab-icon">🖼️</span>
+                        <span class="tab-label">从图片生成</span>
+                    </button>
+                    <button class="function-tab" data-tab="evaluation">
+                        <span class="tab-icon">⭐</span>
+                        <span class="tab-label">概念图评价</span>
+                    </button>
+                    <button class="function-tab" data-tab="scaffold">
+                        <span class="tab-icon">🗺️</span>
+                        <span class="tab-label">支架概念图生成</span>
+                    </button>
+                </div>
+                
+                <!-- 功能模块内容区域 -->
+                <div class="function-content-area">
+                    <!-- 功能0：迷思概念探查 -->
+                    <div class="function-module active" id="function-misconception">
+                        <div class="function-module-header">
+                            <h3>🔬 迷思概念探查</h3>
+                            <p class="function-module-desc">输入一个知识点，AI自动分析并产出相应的迷思概念</p>
+                        </div>
+                        <div class="function-module-content">
+                            <div class="input-group">
+                                <label for="misconceptionTopic">知识点：</label>
+                                <input type="text" id="misconceptionTopic" placeholder="请输入要探查的知识点" class="input-field">
+                            </div>
+                            <button class="btn btn-primary" id="exploreMisconceptionBtn">探查迷思概念</button>
+                        </div>
+                    </div>
+
+                    <!-- 功能1：焦点问题生成 -->
+                    <div class="function-module" id="function-keyword">
+                        <div class="function-module-header">
+                            <h3>🔍 焦点问题生成概念图</h3>
+                            <p class="function-module-desc">输入一个焦点问题，AI自动生成相关概念图</p>
+                        </div>
+                        <div class="function-module-content">
+                            <div class="input-group">
+                                <label for="keyword">焦点问题：</label>
+                                <input type="text" id="keyword" placeholder="请输入焦点问题" class="input-field">
+                            </div>
+                            <button class="btn btn-primary" id="generateKeywordBtn">生成概念图</button>
+                        </div>
+                    </div>
+
+                    <!-- 功能2：文本分析生成 -->
+                    <div class="function-module" id="function-description">
+                        <div class="function-module-header">
+                            <h3>📝 文本分析生成概念图</h3>
+                            <p class="function-module-desc">输入一段描述文字，AI分析并生成概念图</p>
+                        </div>
+                        <div class="function-module-content">
+                            <div class="input-group">
+                                <label for="description">描述文字：</label>
+                                <textarea id="description" placeholder="请输入要分析的文字内容" class="textarea-field" rows="4"></textarea>
+                            </div>
+                            <button class="btn btn-primary" id="generateDescriptionBtn">分析生成</button>
+                        </div>
+                    </div>
+
+                    <!-- 功能3：从图片生成概念图 -->
+                    <div class="function-module" id="function-image-generation">
+                        <div class="function-module-header">
+                            <h3>🖼️ 从图片生成概念图</h3>
+                            <p class="function-module-desc">上传包含文字内容的图片，AI自动识别并生成概念图</p>
+                        </div>
+                        <div class="function-module-content">
+                            <div class="input-group">
+                                <label for="uploadImageForGeneration">上传图片：</label>
+                                <input type="file" id="uploadImageForGeneration" accept="image/*" class="file-input" style="display: none;">
+                                <button class="btn btn-primary" id="uploadImageForGenerationBtn">📤 上传并生成</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 功能4：概念图自动评价 -->
+                    <div class="function-module" id="function-evaluation">
+                        <div class="function-module-header">
+                            <h3>⭐ 概念图自动评价</h3>
+                            <p class="function-module-desc">上传概念图图片，AI自动进行评价分析</p>
+                        </div>
+                        <div class="function-module-content">
+                            <div class="input-group">
+                                <label for="uploadImage">上传概念图：</label>
+                                <input type="file" id="uploadImage" accept="image/*" class="file-input" style="display: none;">
+                                <button class="btn btn-primary" id="uploadImageBtn">📤 上传图片</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 功能5：支架概念图生成 -->
+                    <div class="function-module" id="function-scaffold">
+                        <div class="function-module-header">
+                            <h3>🗺️ 支架概念图生成</h3>
+                            <p class="function-module-desc">选择支架类型，生成相应复杂度的概念图</p>
+                        </div>
+                        <div class="function-module-content">
+                            <div class="input-group">
+                                <label for="scaffoldFocusQuestion">焦点问题：</label>
+                                <input type="text" id="scaffoldFocusQuestion" placeholder="请输入焦点问题" class="input-field">
+                            </div>
+                            <div class="input-group" style="margin-top: 15px;">
+                                <label>支架类型：</label>
+                                <div style="margin-top: 10px;">
+                                    <label style="display: flex; align-items: center; margin-bottom: 10px; cursor: pointer;">
+                                        <input type="radio" name="scaffoldType" value="high" id="scaffoldTypeHigh" style="margin-right: 8px;">
+                                        <span>高支架类型</span>
+                                        <span style="margin-left: 8px; color: #6c757d; font-size: 0.9rem;">（提供较为完整的图示和空缺的概念）</span>
+                                    </label>
+                                    <label style="display: flex; align-items: center; cursor: pointer;">
+                                        <input type="radio" name="scaffoldType" value="low" id="scaffoldTypeLow" style="margin-right: 8px;">
+                                        <span>低支架类型</span>
+                                        <span style="margin-left: 8px; color: #6c757d; font-size: 0.9rem;">（提供概念和标签的支架）</span>
+                                    </label>
+                                </div>
+                            </div>
+                            <button class="btn btn-primary" id="generateScaffoldConceptMapBtn">生成支架概念图</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 工具栏和控制区域（横向排列） -->
+            <section class="control-bar">
+                <!-- 节点操作 -->
+                <div class="control-section">
+                    <h4>节点操作</h4>
+                    <div class="control-buttons">
+                        <button class="btn btn-sm btn-outline" id="addNodeBtn">➕ 添加节点</button>
+                        <button class="btn btn-sm btn-outline" id="deleteNodeBtn">➖ 删除节点</button>
+                        <button class="btn btn-sm btn-outline" id="editNodeBtn">✏️ 编辑节点</button>
+                        <button class="btn btn-sm btn-outline" id="addFocusQuestionBtn">📌 添加焦点问题</button>
+                    </div>
+                </div>
+
+                <!-- 连线操作 -->
+                <div class="control-section">
+                    <h4>连线操作</h4>
+                    <div class="control-buttons">
+                        <button class="btn btn-sm btn-outline" id="addLinkBtn">🔗 添加连线</button>
+                        <button class="btn btn-sm btn-outline" id="deleteLinkBtn">❌ 删除连线</button>
+                        <button class="btn btn-sm btn-outline" id="editLinkBtn">✏️ 编辑连线</button>
+                        <button class="btn btn-sm btn-outline" id="addAggregatedLinkBtn">🔀 聚合连接</button>
+                        <button class="btn btn-sm btn-outline" id="addSameLayerLinkBtn">🔗 同级连接</button>
+                        <button class="btn btn-sm btn-outline" id="addSameLayerAggregatedLinkBtn">🔄 同级聚合连接</button>
+                    </div>
+                </div>
+
+                <!-- 布局控制 -->
+                <div class="control-section">
+                    <h4>布局控制</h4>
+                    <div class="control-buttons">
+                        <div class="select-field" style="display: inline-block; padding: 6px 12px; background-color: #f8f9fa; border: 1px solid #dee2e6; border-radius: 4px; color: #495057; cursor: default;">改进Sugiyama算法</div>
+                        <button class="btn btn-sm btn-outline" id="resetViewBtn">重置视图</button>
+                    </div>
+                </div>
+
+                <!-- 当前流程 -->
+                <div class="control-section control-section-wide">
+                    <h4>当前流程</h4>
+                    <div id="processText" class="process-text-compact">
+                        <!-- 当前流程信息将在这里显示 -->
+                    </div>
+                </div>
+
+                <!-- 文本内容展示 -->
+                <div class="control-section control-section-wide">
+                    <h4>文本内容展示</h4>
+                    <div id="aiIntroText" class="intro-text-compact">
+                        <!-- AI生成的介绍文字将在这里显示 -->
+                    </div>
+                </div>
+            </section>
+
+            <!-- 概念图展示区域（全宽，在底部） -->
+            <section class="graph-display-area">
+                <!-- 概念图占位区域 -->
+                <div class="graph-placeholder">
+                    <div class="placeholder-content">
+                        <div class="placeholder-icon">📊</div>
+                        <h3>开始创建&评价概念图</h3>
+                        <p>您可以选择以下方式：</p>
+                        <div class="creation-options">
+                            <p>1️⃣ <strong>AI生成</strong>：在上方输入关键词或描述，让AI自动生成概念图</p>
+                            <p>2️⃣ <strong>手动创建</strong>：直接使用上方工具栏添加节点和连线，创建自定义概念图</p>
+                            <p>3️⃣ <strong>概念图评价</strong>：上传已有的概念图图片，AI自动进行专业评价分析</p>
+                        </div>
+                        <div class="quick-start">
+                            <p><strong>快速开始：</strong>点击"➕ 添加节点"按钮开始创建您的第一个节点！</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 概念图展示区域（隐藏状态） -->
+                <div class="concept-map-display" style="display: none;">
+                    <div class="graph-canvas-fullwidth">
+                        <svg width="100%" height="1200" class="concept-graph" viewBox="0 0 2400 1200">
+                            <!-- 这里将来会放置D3.js生成的概念图 -->
+                            <!-- 默认显示文字 -->
+                            <text x="1200" y="600" text-anchor="middle" font-size="16" fill="#666">
+                                概念图将在这里显示
+                            </text>
+                        </svg>
+                    </div>
+                </div>
+
+                <!-- 概念节点和关系连接列表区域 -->
+                <div class="concept-lists-area" id="conceptListsArea" style="display: none;">
+                    <!-- 概念节点和关系连接列表将在这里显示 -->
+                </div>
+
+                <!-- 状态栏 -->
+                <div class="status-bar">
+                    <div class="status-info">
+                        <span id="nodeCount">节点: 0</span>
+                        <span id="linkCount">连线: 0</span>
+                    </div>
+                    <div class="status-actions">
+                        <button class="btn btn-sm btn-outline" id="downloadBtn">📷 下载图片</button>
+                        <button class="btn btn-sm btn-outline" id="exportScaffoldBtn" style="display: none;">📤 导出支架图</button>
+                        <button class="btn btn-sm btn-outline" id="loadBtn">📂 加载数据</button>
+                        <button class="btn btn-sm btn-outline" id="undoBtn" disabled>↶ 撤销</button>
+                        <button class="btn btn-sm btn-outline" id="redoBtn" disabled>↷ 重做</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- 底部信息 -->
+        <footer class="footer">
+            <p>概念图自动生成系统 v1.0 | 基于D3.js + AI技术</p>
+        </footer>
+    </div>
+
+    <!-- 端口检查模块 -->
+    <script src="/web/port-checker.js"></script>
+    
+    <!-- 引入算法模块 - 按依赖顺序加载 -->
+    <script src="/algorithm/data-processing.js"></script>
+    <script src="/algorithm/force-directed-layout.js"></script>
+    <script src="/algorithm/sugiyama-layout.js"></script>
+    <script src="/algorithm/layout-algorithms.js"></script>
+    
+    <!-- 引入大模型交互模块 - 按依赖顺序加载 -->
+    <script src="/llm/introduction-service.js"></script>   <!-- 介绍文本生成服务（独立模块） -->
+    <script src="/llm/focus-question-service.js"></script> <!-- 焦点问题提取服务（独立模块）✨ NEW -->
+    <script src="/llm/image-concept-map-service.js"></script> <!-- 图片生成概念图服务（独立模块）✨ NEW -->
+    <script src="/llm/concept-map-evaluation-service.js"></script> <!-- 概念图评价服务（独立模块）✨ NEW -->
+    <script src="/llm/llm-manager.js"></script>            <!-- AI服务管理器（依赖上述服务） -->
+    
+    <!-- 引入 Agent 服务模块 - 按依赖顺序加载 -->
+    <script src="/agent/dify-service.js"></script>        <!-- Dify 对话服务（独立模块） -->
+    <script src="/agent/misconception-service.js"></script> <!-- 迷思概念探查服务（依赖 Dify 服务） -->
+    
+    <!-- 引入整合后的功能模块 - 按依赖顺序加载 -->
+    <script src="/web/process-updater.js"></script> <!-- 流程状态更新模块 -->
+    <script src="/web/utilities.js"></script>   <!-- 工具和辅助功能：布局控制、连线路由、历史管理、导出功能 -->
+    <script src="/web/renderer.js"></script>    <!-- 渲染和UI管理：图形渲染、UI交互、状态管理 -->
+    <script src="/web/interactions.js"></script> <!-- 交互操作：节点操作、连线操作、拖拽处理 -->
+    <script src="/web/core.js"></script>        <!-- 核心模块：DOM初始化、事件绑定、概念图生成（最后加载） -->
+</body>
+</html> 
