@@ -9,21 +9,46 @@ This module contains prompts for concept maps and related diagrams.
 # ============================================================================
 
 CONCEPT_MAP_GENERATION_EN = """
-You are generating a concept map. Think in two steps internally, but OUTPUT ONLY the final JSON object.
+You are generating a hierarchical concept map. Think in two steps internally, but OUTPUT ONLY the final JSON object.
 
 Request: {user_prompt}
 
-Step 1 (Idea expansion): produce 14–24 concise, distinct concepts strongly related to the topic. Use short noun/noun-phrase labels (≤4 words). Avoid duplicates and long sentences.
+## ⚠️ CRITICAL RULES (MUST STRICTLY FOLLOW):
+- **Assign layer markers to each concept (L1, L2, L3, L4, L5, etc.)**
+- **Relationships can ONLY go from higher layer to lower layer** (L1→L2, L2→L3, L3→L4, etc., must be adjacent layers)
+- **Same-layer relationships are allowed** (L2→L2, L3→L3, etc.)
+- **🔴🔴🔴 STRICTLY FORBIDDEN: Reverse relationships** (absolutely NO L2→L1, L3→L2, L4→L3, etc.)
+- **🔴🔴🔴 STRICTLY FORBIDDEN: Cross-layer relationships** (absolutely NO L1→L3, L1→L4, L2→L4, etc.)
 
-Step 2 (Relationships):
-  2a. For each concept from Step 1, create exactly one directed relationship between the topic and that concept, using a short verb/verb-phrase (1–3 words). Choose the best direction (concept -> topic or topic -> concept).
-  2b. Additionally, add several high-confidence concept–concept relationships (0–2 per concept, total 6–18). Each must be a single directed edge with a short verb/verb-phrase label.
+## Layer Structure:
+- **L1 (Layer 1)**: Central topic (usually 1 node - the main topic)
+- **L2 (Layer 2)**: Main categories or dimensions (4-6 nodes)
+- **L3 (Layer 3)**: Specific classifications or sub-dimensions (6-10 nodes)
+- **L4 (Layer 4)**: Detailed instances or examples (6-10 nodes)
+- **L5+ (Deeper layers)**: Can continue if content requires
+
+Step 1 (Idea expansion with layers): 
+- Produce 14–24 concise, distinct concepts strongly related to the topic
+- Use short noun/noun-phrase labels (≤4 words)
+- Assign each concept a layer (L2, L3, L4, etc.)
+- L1 is reserved for the central topic
+
+Step 2 (Relationships - ONLY from higher to lower layers):
+  2a. For each concept, create exactly one directed relationship FROM the topic TO that concept (topic → concept, NEVER concept → topic).
+  2b. Add concept–concept relationships ONLY between adjacent layers (L2→L3, L3→L4) or same layer (L2→L2, L3→L3).
   Examples: causes, leads to, is part of, includes, requires, results in, produces, regulates, is type of, consists of, connected to, located in.
 
-Uniqueness constraints (very important):
-- Exactly one relationship between the topic and any given concept (no duplicates in either direction).
-- At most one relationship between any unordered pair of concepts (no duplicate or opposite-direction duplicates between the same pair).
-- No self-loops.
+## Relationship Rules:
+- **L1→L2**: At least 4 relationships (topic connects to main categories)
+- **L2→L3**: At least 6 relationships (categories connect to sub-concepts)
+- **L3→L4**: At least 6 relationships (sub-concepts connect to details)
+- **Same-layer allowed**: L2→L2, L3→L3, L4→L4
+
+## Uniqueness constraints (very important):
+- Exactly one relationship between the topic and any given concept.
+- At most one relationship between any unordered pair of concepts.
+- No self-loops (from ≠ to).
+- No reverse relationships (lower → higher is FORBIDDEN).
 
 Final OUTPUT (JSON only, no code fences):
 {
@@ -33,27 +58,53 @@ Final OUTPUT (JSON only, no code fences):
 }
 
 Rules:
-- Relationship endpoints must be the topic or a concept from the list.
+- ALL relationships must flow from topic outward (topic→concept) or from higher layer to lower/same layer.
+- NEVER create relationships pointing TO the topic (concept→topic is FORBIDDEN).
 - Keep text brief; avoid punctuation except hyphens in terms.
 - Do not include any fields other than topic, concepts, relationships.
 """
 
 CONCEPT_MAP_GENERATION_ZH = """
-你要生成“概念图”。按两个内部步骤思考，但最终只输出 JSON 对象。
+你要生成"分层概念图"。按两个内部步骤思考，但最终只输出 JSON 对象。
 
 需求：{user_prompt}
 
-步骤 1（扩展概念）：列出 14–24 个与中心主题强相关的概念，使用简短名词/名词短语（≤4 个词），避免重复与长句。
+## ⚠️ 核心规则（必须严格遵守）：
+- **为每个概念添加层级标记（L1、L2、L3、L4、L5等）**
+- **关系只能从高层到低层**（L1→L2、L2→L3、L3→L4等，单向流动，必须相邻层）
+- **允许同层连接**（L2→L2、L3→L3、L4→L4等）
+- **🔴🔴🔴 严格禁止反向关系**（绝对不能从低层到高层，如L2→L1、L3→L2、L4→L3等）
+- **🔴🔴🔴 严格禁止跨层关系**（绝对不能从L1直接连接到L3或L4，必须逐层连接）
 
-步骤 2（关系）：
-  2a. 对步骤 1 的每个概念，生成且仅生成 1 条“主题 与 该概念”之间的有向关系，使用 1–3 个词的动词/动词短语作为标签；根据含义选择方向（概念 -> 主题 或 主题 -> 概念）。
-  2b. 另外补充若干概念–概念关系（每个概念 0–2 条，总计约 6–18 条），每条为单一有向边并使用简短动词/动词短语标签。
+## 层级结构：
+- **L1（第一层）**：中心主题（通常1个节点 - 即主题本身）
+- **L2（第二层）**：主要分类或维度（4-6个节点）
+- **L3（第三层）**：具体分类或子维度（6-10个节点）
+- **L4（第四层）**：具体细节或实例（6-10个节点）
+- **L5及更深层**：根据内容需要可继续细分
+
+步骤 1（带层级的概念扩展）：
+- 列出 14–24 个与中心主题强相关的概念
+- 使用简短名词/名词短语（≤4 个词）
+- 为每个概念分配层级（L2、L3、L4等）
+- L1 保留给中心主题
+
+步骤 2（关系 - 只能从高层到低层）：
+  2a. 对每个概念，生成且仅生成 1 条从"主题"到"该概念"的有向关系（主题 → 概念，禁止 概念 → 主题）。
+  2b. 补充概念–概念关系，只能在相邻层之间（L2→L3、L3→L4）或同层之间（L2→L2、L3→L3）。
   示例标签：导致、引起、属于、包含、需要、产生、调节、是…的一种、由…组成、连接到、位于。
 
-唯一性约束（非常重要）：
-- “主题 与 任一概念”之间必须且仅能有 1 条关系（方向任选，但不得重复）。
-- “任意两个概念”之间至多 1 条关系（同一无序对不得出现重复或反向重复）。
+## 关系数量要求：
+- **L1→L2**：至少 4 条关系（主题连接到主要分类）
+- **L2→L3**：至少 6 条关系（分类连接到子概念）
+- **L3→L4**：至少 6 条关系（子概念连接到细节）
+- **同层允许**：L2→L2、L3→L3、L4→L4
+
+## 唯一性约束（非常重要）：
+- "主题 与 任一概念"之间必须且仅能有 1 条关系。
+- "任意两个概念"之间至多 1 条关系。
 - 不允许自环（from 与 to 相同）。
+- 禁止反向关系（低层 → 高层 是禁止的）。
 
 最终输出（只输出 JSON，不要代码块）：
 {
@@ -63,7 +114,8 @@ CONCEPT_MAP_GENERATION_ZH = """
 }
 
 规则：
-- 关系两端必须是主题或概念列表中的项。
+- 所有关系必须从主题向外流动（主题→概念）或从高层到低层/同层。
+- **绝对禁止**创建指向主题的关系（概念→主题 是禁止的）。
 - 文本保持简短；除术语连字符外尽量不使用标点。
 - 仅包含 topic、concepts、relationships 三个字段。
 """
@@ -96,9 +148,15 @@ Rules:
 # ============================================================================
 
 CONCEPT_MAP_UNIFIED_GENERATION_EN = """
-Generate a complete concept map in ONE STRICT JSON. OUTPUT ONLY JSON.
+Generate a complete hierarchical concept map in ONE STRICT JSON. OUTPUT ONLY JSON.
 
 Request: {user_prompt}
+
+## ⚠️ CRITICAL DIRECTION RULES:
+- **ALL relationships must flow OUTWARD from topic** (Topic → Key → Part)
+- **🔴🔴🔴 FORBIDDEN: Relationships pointing TO the topic** (NEVER create concept→topic)
+- Hierarchical structure: Topic → Keys → Parts
+- Same-level relationships allowed (key↔key, part↔part)
 
 Output EXACTLY this shape (use ASCII double quotes, no trailing commas, no comments, no code fences; minify if needed):
 {
@@ -119,15 +177,24 @@ Output EXACTLY this shape (use ASCII double quotes, no trailing commas, no comme
 Strict rules (very important):
 - 4–8 keys; each key concise and unique.
 - For each key, 3–6 parts; concise and unique within that key.
-- relationships must include every topic→key and key→part exactly once; may include a few key↔key or part↔part if helpful, but ensure uniqueness: no duplicate edges between the same unordered pair; no self-loops.
+- relationships must include every topic→key and key→part exactly once (topic/key MUST be in "from" field).
+- May include a few key↔key or part↔part if helpful, but ensure uniqueness.
+- **NEVER put the topic in the "to" field** - relationships must flow OUTWARD.
+- No duplicate edges between the same unordered pair; no self-loops.
 - Keep labels 1–3 words (e.g., includes, regulates, influences, results in). No code fences.
 - Total unique concepts (keys + parts) ≤ 30.
 """
 
 CONCEPT_MAP_UNIFIED_GENERATION_ZH = """
-一次性生成完整“概念图”。只输出 严格 JSON（仅使用ASCII双引号，不要尾随逗号、不要注释、不要代码块）。
+一次性生成完整"分层概念图"。只输出 严格 JSON（仅使用ASCII双引号，不要尾随逗号、不要注释、不要代码块）。
 
 需求：{user_prompt}
+
+## ⚠️ 关键方向规则：
+- **所有关系必须从主题向外流动**（主题 → 关键 → 子概念）
+- **🔴🔴🔴 禁止：指向主题的关系**（绝对不能创建 概念→主题）
+- 层次结构：主题 → 关键概念 → 子概念
+- 允许同层关系（关键↔关键、子↔子）
 
 输出格式（必须严格一致，必要时可压缩为单行）：
 {
@@ -148,7 +215,10 @@ CONCEPT_MAP_UNIFIED_GENERATION_ZH = """
 严格规则（非常重要）：
 - 4–8 个关键概念，简洁且唯一。
 - 每个关键概念 3–6 个子概念，简洁且唯一。
-- relationships 中必须包含所有 主题→关键 与 关键→子概念 各 1 条；可少量包含关键↔关键或子↔子，但要唯一：同一无序对最多 1 条；不允许自环。
+- relationships 中必须包含所有 主题→关键 与 关键→子概念 各 1 条（主题/关键必须在"from"字段中）。
+- 可少量包含关键↔关键或子↔子，但要唯一。
+- **绝对不能把主题放在"to"字段中** - 关系必须向外流动。
+- 同一无序对最多 1 条；不允许自环。
 - 标签为 1–3 个词（如：包含、调节、影响、导致）。不要代码块。
 - 总概念数（关键+子概念）≤ 30。
 """
@@ -268,16 +338,22 @@ CRITICAL REQUIREMENTS:
 """
 
 CONCEPT_MAP_ENHANCED_STAGE2_EN = """
-Generate comprehensive relationships for a concept map. OUTPUT ONLY JSON.
+Generate comprehensive hierarchical relationships for a concept map. OUTPUT ONLY JSON.
 
 Topic: {topic}
 Concepts: {concepts}
 
+## ⚠️ CRITICAL DIRECTION RULES (MUST FOLLOW):
+- **ALL central relationships: Topic → Concept (topic is ALWAYS "from")**
+- **🔴🔴🔴 STRICTLY FORBIDDEN: Concept → Topic** (NEVER create relationships pointing TO the topic)
+- Hierarchical flow: Broader concepts → Specific concepts
+- Same-level connections are allowed
+
 RELATIONSHIP STRATEGY:
 Create a rich network of meaningful connections:
 
-1. CENTRAL RELATIONSHIPS: Topic → each concept (required)
-2. HIERARCHICAL: Broader concepts → specific concepts
+1. CENTRAL RELATIONSHIPS: Topic → each concept (required, topic is always "from")
+2. HIERARCHICAL: Broader concepts → specific concepts (higher layer → lower layer)
 3. CAUSAL: What causes what? What leads to what?
 4. COMPOSITIONAL: What is part of what? What contains what?
 5. FUNCTIONAL: What enables what? What supports what?
@@ -303,11 +379,12 @@ Output format:
 }}
 
 CRITICAL REQUIREMENTS:
-- Include ALL topic→concept relationships (one per concept)
+- Include ALL topic→concept relationships (one per concept, topic MUST be in "from" field)
 - Add 15-25 meaningful concept→concept connections
 - Use short verb phrases (1-3 words maximum)
 - No self-loops (from ≠ to)
 - No duplicate relationships between the same pair
+- **NEVER put the topic in the "to" field** - relationships must flow OUTWARD from topic
 - Ensure logical consistency and meaningful connections
 - Pure JSON only - no code fences or markdown
 """
@@ -346,14 +423,20 @@ Rules:
 """
 
 CONCEPT_MAP_STAGE2_RELATIONSHIPS_EN = """
-Generate relationships for a concept map. OUTPUT ONLY JSON.
+Generate hierarchical relationships for a concept map. OUTPUT ONLY JSON.
 
 Topic: {topic}
 Concepts: {concepts}
 
+## ⚠️ CRITICAL DIRECTION RULES:
+- **ALL relationships must flow OUTWARD from topic** (Topic → Concept)
+- **🔴🔴🔴 FORBIDDEN: Concept → Topic relationships** (NEVER create relationships pointing TO the topic)
+- Concept-to-concept relationships should flow from broader to more specific concepts
+- Same-level relationships are allowed
+
 Create relationships between:
-1. Topic → each concept (central relationships)
-2. Concept → concept (cross-connections)
+1. Topic → each concept (central relationships - REQUIRED for all concepts)
+2. Concept → concept (cross-connections, from broader to specific)
 
 Output format:
 {{
@@ -363,11 +446,12 @@ Output format:
 }}
 
 Rules:
-- Include topic→concept relationships for ALL concepts
+- Include topic→concept relationships for ALL concepts (topic is always the "from", concept is always the "to")
 - Add 10-20 concept→concept relationships
 - Use short verb phrases (1-3 words) like: causes, includes, leads to, is part of, requires
 - No self-loops (from ≠ to)
 - No duplicate relationships between same pair
+- **NEVER put the topic in the "to" field** - topic should only appear in "from"
 - Pure JSON only, no code fences
 """
 
@@ -415,16 +499,22 @@ CONCEPT_MAP_ENHANCED_STAGE1_ZH = """
 """
 
 CONCEPT_MAP_ENHANCED_STAGE2_ZH = """
-为概念图生成综合关系。只输出JSON。
+为概念图生成综合分层关系。只输出JSON。
 
 主题：{topic}
 概念：{concepts}
 
+## ⚠️ 关键方向规则（必须遵守）：
+- **所有中心关系：主题 → 概念（主题始终是"from"）**
+- **🔴🔴🔴 严格禁止：概念 → 主题**（绝对不能创建指向主题的关系）
+- 层次流向：广泛概念 → 具体概念（高层 → 低层）
+- 允许同层连接
+
 关系策略：
 创建有意义连接的丰富网络：
 
-1. 中心关系：主题 → 每个概念（必需）
-2. 层次关系：广泛概念 → 具体概念
+1. 中心关系：主题 → 每个概念（必需，主题始终是"from"）
+2. 层次关系：广泛概念 → 具体概念（高层 → 低层）
 3. 因果关系：什么导致什么？什么引起什么？
 4. 组成关系：什么是什么的一部分？什么包含什么？
 5. 功能关系：什么促成什么？什么支持什么？
@@ -450,11 +540,12 @@ CONCEPT_MAP_ENHANCED_STAGE2_ZH = """
 }}
 
 关键要求：
-- 包含所有主题→概念关系（每个概念一条）
+- 包含所有主题→概念关系（每个概念一条，主题必须在"from"字段中）
 - 添加15-25个有意义的概念→概念连接
 - 使用简短动词短语（最多1-3个词）
 - 无自环（from ≠ to）
 - 同一对概念间无重复关系
+- **绝对不能把主题放在"to"字段中** - 关系必须从主题向外流动
 - 确保逻辑一致性和有意义连接
 - 纯JSON格式 - 不要代码块或markdown
 """
@@ -489,14 +580,20 @@ CONCEPT_MAP_STAGE1_CONCEPTS_ZH = """
 """
 
 CONCEPT_MAP_STAGE2_RELATIONSHIPS_ZH = """
-为概念图生成关系。只输出JSON。
+为概念图生成分层关系。只输出JSON。
 
 主题：{topic}
 概念：{concepts}
 
+## ⚠️ 关键方向规则：
+- **所有关系必须从主题向外流动**（主题 → 概念）
+- **🔴🔴🔴 禁止：概念 → 主题的关系**（绝对不能创建指向主题的关系）
+- 概念与概念之间的关系应从更广泛的概念流向更具体的概念
+- 允许同层关系
+
 创建以下关系：
-1. 主题 → 每个概念（中心关系）
-2. 概念 → 概念（交叉连接）
+1. 主题 → 每个概念（中心关系 - 所有概念都必须有）
+2. 概念 → 概念（交叉连接，从广泛到具体）
 
 输出格式：
 {{
@@ -506,11 +603,12 @@ CONCEPT_MAP_STAGE2_RELATIONSHIPS_ZH = """
 }}
 
 规则：
-- 包含所有主题→概念的关系
+- 包含所有主题→概念的关系（主题始终是"from"，概念始终是"to"）
 - 添加10-20个概念→概念的关系
 - 使用简短动词短语（1-3个词），如：导致、包含、引起、属于、需要
 - 无自环（from ≠ to）
 - 同一对概念间无重复关系
+- **绝对不能把主题放在"to"字段中** - 主题只能出现在"from"中
 - 纯JSON格式，不要代码块
 """
 
@@ -619,15 +717,21 @@ Rules:
 """
 
 CONCEPT_MAP_NETWORK_STAGE2_EN = """
-Generate a comprehensive relationship matrix for concepts. OUTPUT ONLY JSON.
+Generate a comprehensive hierarchical relationship matrix for concepts. OUTPUT ONLY JSON.
 
 Topic: {topic}
 Concepts: {concepts}
 
+## ⚠️ CRITICAL DIRECTION RULES:
+- **ALL central relationships: Topic → Concept (topic is ALWAYS "from")**
+- **🔴🔴🔴 STRICTLY FORBIDDEN: Concept → Topic** (NEVER create relationships pointing TO the topic)
+- Cross-connections should flow from broader to more specific concepts
+- Same-level connections are allowed
+
 Create a relationship matrix showing which concepts connect to which, including:
-1. Central relationships: Topic → each concept
+1. Central relationships: Topic → each concept (topic is always "from")
 2. Cross-connections: Meaningful concept → concept relationships
-3. Hierarchical relationships where applicable
+3. Hierarchical relationships where applicable (broader → specific)
 4. Causal, logical, and associative connections
 
 Output format:
@@ -638,11 +742,12 @@ Output format:
 }}
 
 Rules:
-- Include ALL topic→concept relationships (one per concept)
+- Include ALL topic→concept relationships (one per concept, topic MUST be in "from" field)
 - Add 15-30 meaningful concept→concept connections
 - Use short verb phrases (1-3 words): causes, includes, leads to, is part of, requires, results in, produces, regulates, is type of, consists of, connected to, located in, influences, supports, enables
 - No self-loops (from ≠ to)
 - No duplicate relationships between other pairs
+- **NEVER put the topic in the "to" field** - relationships must flow OUTWARD from topic
 - Ensure the network shows meaningful connections and patterns
 - Pure JSON only, no code fences
 """
@@ -678,15 +783,21 @@ CONCEPT_MAP_NETWORK_STAGE1_ZH = """
 """
 
 CONCEPT_MAP_NETWORK_STAGE2_ZH = """
-为概念生成综合关系矩阵。只输出JSON。
+为概念生成综合分层关系矩阵。只输出JSON。
 
 主题：{topic}
 概念：{concepts}
 
+## ⚠️ 关键方向规则：
+- **所有中心关系：主题 → 概念（主题始终是"from"）**
+- **🔴🔴🔴 严格禁止：概念 → 主题**（绝对不能创建指向主题的关系）
+- 交叉连接应从更广泛的概念流向更具体的概念
+- 允许同层连接
+
 创建关系矩阵，显示哪些概念相互连接，包括：
-1. 中心关系：主题 → 每个概念
+1. 中心关系：主题 → 每个概念（主题始终是"from"）
 2. 交叉连接：有意义的概念 → 概念关系
-3. 层次关系（如适用）
+3. 层次关系（如适用，广泛 → 具体）
 4. 因果、逻辑和关联连接
 
 输出格式：
@@ -697,11 +808,12 @@ CONCEPT_MAP_NETWORK_STAGE2_ZH = """
 }}
 
 规则：
-- 包含所有主题→概念关系（每个概念一条）
+- 包含所有主题→概念关系（每个概念一条，主题必须在"from"字段中）
 - 添加15-30个有意义的概念→概念连接
 - 使用简短动词短语（1-3个词）：导致、包含、引起、属于、需要、产生、调节、是...的一种、由...组成、连接到、位于、影响、支持、促成
 - 无自环（from ≠ to）
 - 同一对概念间无重复关系
+- **绝对不能把主题放在"to"字段中** - 关系必须从主题向外流动
 - 确保网络显示有意义的连接和模式
 - 纯JSON格式，不要代码块
 """
@@ -1113,16 +1225,22 @@ CONCEPT_MAP_ENHANCED_STAGE1_ZH = """
 """
 
 CONCEPT_MAP_ENHANCED_STAGE2_ZH = """
-为概念图生成综合关系。只输出JSON。
+为概念图生成综合分层关系。只输出JSON。
 
 主题：{topic}
 概念：{concepts}
 
+## ⚠️ 关键方向规则（必须遵守）：
+- **所有中心关系：主题 → 概念（主题始终是"from"）**
+- **🔴🔴🔴 严格禁止：概念 → 主题**（绝对不能创建指向主题的关系）
+- 层次流向：广泛概念 → 具体概念（高层 → 低层）
+- 允许同层连接
+
 关系策略：
 创建有意义连接的丰富网络：
 
-1. 中心关系：主题 → 每个概念（必需）
-2. 层次关系：广泛概念 → 具体概念
+1. 中心关系：主题 → 每个概念（必需，主题始终是"from"）
+2. 层次关系：广泛概念 → 具体概念（高层 → 低层）
 3. 因果关系：什么导致什么？什么引起什么？
 4. 组成关系：什么是什么的一部分？什么包含什么？
 5. 功能关系：什么促成什么？什么支持什么？
@@ -1148,11 +1266,12 @@ CONCEPT_MAP_ENHANCED_STAGE2_ZH = """
 }}
 
 关键要求：
-- 包含所有主题→概念关系（每个概念一条）
+- 包含所有主题→概念关系（每个概念一条，主题必须在"from"字段中）
 - 添加15-25个有意义的概念→概念连接
 - 使用简短动词短语（最多1-3个词）
 - 无自环（from ≠ to）
 - 同一对概念间无重复关系
+- **绝对不能把主题放在"to"字段中** - 关系必须从主题向外流动
 - 确保逻辑一致性和有意义连接
 - 纯JSON格式 - 不要代码块或markdown
 """
@@ -1504,16 +1623,22 @@ CONCEPT_MAP_30_CONCEPTS_ZH = """
 """
 
 CONCEPT_MAP_3_STAGE_RELATIONSHIPS_EN = """
-Generate comprehensive relationships for a concept map. OUTPUT ONLY JSON.
+Generate comprehensive hierarchical relationships for a concept map. OUTPUT ONLY JSON.
 
 Central topic: {central_topic}
 Concepts: {concepts}
 
+## ⚠️ CRITICAL DIRECTION RULES (MUST FOLLOW):
+- **ALL central relationships: Central topic → Concept (topic is ALWAYS "from")**
+- **🔴🔴🔴 STRICTLY FORBIDDEN: Concept → Central topic** (NEVER create relationships pointing TO the topic)
+- Hierarchical flow: Broader concepts → Specific concepts (higher layer → lower layer)
+- Same-level connections are allowed
+
 RELATIONSHIP STRATEGY:
 Create a rich network of meaningful connections:
 
-1. CENTRAL RELATIONSHIPS: Central topic → each concept (required - 30 relationships)
-2. HIERARCHICAL: Broader concepts → specific concepts
+1. CENTRAL RELATIONSHIPS: Central topic → each concept (required - 30 relationships, topic is always "from")
+2. HIERARCHICAL: Broader concepts → specific concepts (higher layer → lower layer)
 3. CAUSAL: What causes what? What leads to what?
 4. COMPOSITIONAL: What is part of what? What contains what?
 5. FUNCTIONAL: What enables what? What supports what?
@@ -1539,26 +1664,33 @@ Output format:
 }}
 
 CRITICAL REQUIREMENTS:
-- Include ALL central_topic→concept relationships (exactly 30)
+- Include ALL central_topic→concept relationships (exactly 30, topic MUST be in "from" field)
 - Add 20-30 meaningful concept→concept connections
 - Use short verb phrases (1-3 words maximum)
 - No self-loops (from ≠ to)
 - No duplicate relationships between the same pair
+- **NEVER put the central topic in the "to" field** - relationships must flow OUTWARD from topic
 - Ensure logical consistency and meaningful connections
 - Pure JSON only - no code fences or markdown
 """
 
 CONCEPT_MAP_3_STAGE_RELATIONSHIPS_ZH = """
-为概念图生成综合关系。只输出JSON。
+为概念图生成综合分层关系。只输出JSON。
 
 中心主题：{central_topic}
 概念：{concepts}
 
+## ⚠️ 关键方向规则（必须遵守）：
+- **所有中心关系：中心主题 → 概念（中心主题始终是"from"）**
+- **🔴🔴🔴 严格禁止：概念 → 中心主题**（绝对不能创建指向中心主题的关系）
+- 层次流向：广泛概念 → 具体概念（高层 → 低层）
+- 允许同层连接
+
 关系策略：
 创建有意义连接的丰富网络：
 
-1. 中心关系：中心主题 → 每个概念（必需 - 30个关系）
-2. 层次关系：广泛概念 → 具体概念
+1. 中心关系：中心主题 → 每个概念（必需 - 30个关系，中心主题始终是"from"）
+2. 层次关系：广泛概念 → 具体概念（高层 → 低层）
 3. 因果关系：什么导致什么？什么引起什么？
 4. 组成关系：什么是什么的一部分？什么包含什么？
 5. 功能关系：什么促成什么？什么支持什么？
@@ -1584,11 +1716,12 @@ CONCEPT_MAP_3_STAGE_RELATIONSHIPS_ZH = """
 }}
 
 关键要求：
-- 包含所有中心主题→概念关系（恰好30个）
+- 包含所有中心主题→概念关系（恰好30个，中心主题必须在"from"字段中）
 - 添加20-30个有意义的概念→概念连接
 - 使用简短动词短语（最多1-3个词）
 - 无自环（from ≠ to）
 - 同一对概念间无重复关系
+- **绝对不能把中心主题放在"to"字段中** - 关系必须从中心主题向外流动
 - 确保逻辑一致性和有意义连接
 - 纯JSON格式 - 不要代码块或markdown
 """
@@ -1598,10 +1731,16 @@ CONCEPT_MAP_3_STAGE_RELATIONSHIPS_ZH = """
 # ============================================================================
 
 CONCEPT_MAP_RELATIONSHIP_QUALITY_EN = """
-Generate high-quality relationships with semantic validation. OUTPUT ONLY JSON.
+Generate high-quality hierarchical relationships with semantic validation. OUTPUT ONLY JSON.
 
 Topic: {topic}
 Concepts: {concepts}
+
+## ⚠️ CRITICAL DIRECTION RULES (MUST FOLLOW):
+- **ALL central relationships: Topic → Concept (topic is ALWAYS "from")**
+- **🔴🔴🔴 STRICTLY FORBIDDEN: Concept → Topic** (NEVER create relationships pointing TO the topic)
+- Hierarchical flow: Broader concepts → Specific concepts
+- Same-level connections are allowed
 
 RELATIONSHIP QUALITY STANDARDS:
 Each relationship must be:
@@ -1609,7 +1748,7 @@ Each relationship must be:
 ✓ SPECIFIC: Clear and precise relationship type
 ✓ MEANINGFUL: Adds value to understanding the topic
 ✓ NON-REDUNDANT: No duplicate or overly similar connections
-✓ DIRECTIONALLY CORRECT: From source to target makes sense
+✓ DIRECTIONALLY CORRECT: From source to target makes sense (topic → concept, broader → specific)
 ✓ LABELED APPROPRIATELY: Verb phrase accurately describes the connection
 
 RELATIONSHIP CATEGORIES TO COVER:
@@ -1647,20 +1786,27 @@ Output format:
 }}
 
 CRITICAL REQUIREMENTS:
-- Include ALL topic→concept relationships (one per concept)
+- Include ALL topic→concept relationships (one per concept, topic MUST be in "from" field)
 - Add 15-25 high-quality concept→concept connections
 - Use precise verb phrases (1-3 words maximum)
 - No self-loops (from ≠ to)
 - No duplicate relationships between the same pair
+- **NEVER put the topic in the "to" field** - relationships must flow OUTWARD from topic
 - Each relationship must pass quality standards
 - Pure JSON only - no code fences or markdown
 """
 
 CONCEPT_MAP_RELATIONSHIP_QUALITY_ZH = """
-生成高质量关系并进行语义验证。只输出JSON。
+生成高质量分层关系并进行语义验证。只输出JSON。
 
 主题：{topic}
 概念：{concepts}
+
+## ⚠️ 关键方向规则（必须遵守）：
+- **所有中心关系：主题 → 概念（主题始终是"from"）**
+- **🔴🔴🔴 严格禁止：概念 → 主题**（绝对不能创建指向主题的关系）
+- 层次流向：广泛概念 → 具体概念
+- 允许同层连接
 
 关系质量标准：
 每个关系必须：
@@ -1668,7 +1814,7 @@ CONCEPT_MAP_RELATIONSHIP_QUALITY_ZH = """
 ✓ 具体：清晰精确的关系类型
 ✓ 有意义：增加对主题的理解价值
 ✓ 非冗余：无重复或过于相似的连接
-✓ 方向正确：从源到目标有意义
+✓ 方向正确：从源到目标有意义（主题 → 概念，广泛 → 具体）
 ✓ 标签适当：动词短语准确描述连接
 
 要涵盖的关系类别：
@@ -1706,11 +1852,12 @@ CONCEPT_MAP_RELATIONSHIP_QUALITY_ZH = """
 }}
 
 关键要求：
-- 包含所有主题→概念关系（每个概念一条）
+- 包含所有主题→概念关系（每个概念一条，主题必须在"from"字段中）
 - 添加15-25个高质量概念→概念连接
 - 使用精确动词短语（最多1-3个词）
 - 无自环（from ≠ to）
 - 同一对概念间无重复关系
+- **绝对不能把主题放在"to"字段中** - 关系必须从主题向外流动
 - 每个关系必须通过质量标准
 - 纯JSON格式 - 不要代码块或markdown
 """

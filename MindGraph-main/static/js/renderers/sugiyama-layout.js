@@ -107,57 +107,119 @@ function assignLayers(nodes, links) {
 }
 
 // ============================================================================
-// Sugiyama 算法步骤2: 节点排序
+// Sugiyama 算法步骤2: 节点排序（减少连线交叉）
+// 移植自 concept-map-new-master，增强了聚合连线支持
 // ============================================================================
 
+/**
+ * 检测聚合连线（用于排序优化）
+ * @param {Array} links - 连线数组
+ * @returns {Array} 聚合连接组数组
+ */
+function detectAggregatedLinksForSorting(links) {
+    const groups = new Map();
+    
+    links.forEach(link => {
+        const label = link.label || '';
+        const sourceId = typeof link.source === 'string' ? link.source : link.source?.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target?.id;
+        
+        // 只对非空且有意义的连接词进行聚合
+        if (label && label.trim().length > 0 && label !== '双击编辑') {
+            const key = `${sourceId}_${label}`;
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    sourceId: sourceId,
+                    label: label,
+                    targetIds: []
+                });
+            }
+            groups.get(key).targetIds.push(targetId);
+        }
+    });
+    
+    // 只返回有2个或更多目标的组（需要聚合）
+    return Array.from(groups.values()).filter(group => group.targetIds.length >= 2);
+}
+
 function orderNodesInLayers(nodes, links, levels) {
-    console.log('Sugiyama: 开始节点排序...');
+    console.log('Sugiyama: 开始节点排序（减少连线交叉）...');
     
     const nodeMap = new Map();
     nodes.forEach(node => nodeMap.set(node.id, node));
     
+    // 为每层分配初始索引（用于计算重心）
+    const nodeIndexInLayer = new Map();
+    levels.forEach((levelNodes, level) => {
+        levelNodes.forEach((node, idx) => {
+            nodeIndexInLayer.set(node.id, idx);
+        });
+    });
+    
     const orderedLevels = new Map();
     
-    levels.forEach((levelNodes, level) => {
+    // 按层级顺序处理（从上到下）
+    const sortedLevelKeys = Array.from(levels.keys()).sort((a, b) => a - b);
+    
+    sortedLevelKeys.forEach((level) => {
+        const levelNodes = levels.get(level);
+        
         if (levelNodes.length <= 1) {
             orderedLevels.set(level, levelNodes);
             return;
         }
         
-        // 计算重心
-        const nodeBarycenters = new Map();
+        // 获取当前层的 layer 值
+        const currentLayer = levelNodes[0]?.layer || (level + 1);
+        
+        // 计算每个节点的父节点索引（用于重心计算）
+        // 关键：使用父节点在其层中的索引位置，而不是 X 坐标
+        const nodeParentIndices = new Map();
+        
         levelNodes.forEach(node => {
-            let totalWeight = 0;
-            let weightedSum = 0;
+            const parentIndices = [];
             
             links.forEach(link => {
-                const sourceId = typeof link.source === 'string' ? link.source : link.source.id;
-                const targetId = typeof link.target === 'string' ? link.target : link.target.id;
+                const sourceId = typeof link.source === 'string' ? link.source : link.source?.id;
+                const targetId = typeof link.target === 'string' ? link.target : link.target?.id;
                 
-                if (sourceId === node.id) {
-                    const targetNode = nodeMap.get(targetId);
-                    if (targetNode && targetNode.layer > node.layer) {
-                        weightedSum += targetNode.x || 0;
-                        totalWeight += 1;
-                    }
-                } else if (targetId === node.id) {
-                    const sourceNode = nodeMap.get(sourceId);
-                    if (sourceNode && sourceNode.layer < node.layer) {
-                        weightedSum += sourceNode.x || 0;
-                        totalWeight += 1;
+                // 找到连接到当前节点的父节点
+                if (targetId === node.id) {
+                    const parentNode = nodeMap.get(sourceId);
+                    if (parentNode && parentNode.layer !== undefined && parentNode.layer < currentLayer) {
+                        // 获取父节点在其层中的索引
+                        const parentIndex = nodeIndexInLayer.get(sourceId);
+                        if (parentIndex !== undefined) {
+                            parentIndices.push(parentIndex);
+                        }
                     }
                 }
             });
             
-            nodeBarycenters.set(node.id, totalWeight > 0 ? weightedSum / totalWeight : 0);
+            // 计算父节点的平均索引（作为排序依据）
+            if (parentIndices.length > 0) {
+                const avgIndex = parentIndices.reduce((sum, idx) => sum + idx, 0) / parentIndices.length;
+                nodeParentIndices.set(node.id, avgIndex);
+            } else {
+                // 没有父节点，使用当前索引
+                nodeParentIndices.set(node.id, nodeIndexInLayer.get(node.id) || 0);
+            }
         });
         
-        // 按重心排序
+        // 按父节点的平均索引排序
         const sortedNodes = [...levelNodes].sort((a, b) => {
-            return (nodeBarycenters.get(a.id) || 0) - (nodeBarycenters.get(b.id) || 0);
+            const indexA = nodeParentIndices.get(a.id) || 0;
+            const indexB = nodeParentIndices.get(b.id) || 0;
+            return indexA - indexB;
+        });
+        
+        // 更新节点在层中的索引
+        sortedNodes.forEach((node, idx) => {
+            nodeIndexInLayer.set(node.id, idx);
         });
         
         orderedLevels.set(level, sortedNodes);
+        console.log(`Sugiyama: 第${level}层排序完成: ${sortedNodes.map(n => n.label || n.id).join(', ')}`);
     });
     
     console.log('Sugiyama: 节点排序完成');
@@ -172,8 +234,8 @@ function assignCoordinates(nodes, orderedLevels, width, height, links = []) {
     console.log('Sugiyama: 开始坐标分配...');
     console.log(`Sugiyama: 画布尺寸 ${width} x ${height}`);
     
-    // 布局参数 (与 concept-map-new-master 一致)
-    const horizontalMargin = 150;
+    // 布局参数 - 统一使用 100px 边距
+    const horizontalMargin = 100;
     const focusToLayer1Spacing = 60; // 焦点问题到第一层的间距
     const minLayerSpacing = 180; // 最小层间距
     const minGapBetweenLayers = 50; // 相邻层节点之间的最小间隙
@@ -228,16 +290,22 @@ function assignCoordinates(nodes, orderedLevels, width, height, links = []) {
         const [, focusNodes] = focusQuestionLevel;
         const centerX = width / 2;
         focusNodes.forEach(node => {
-            // 计算焦点问题节点尺寸
-            const fontSize = 18;
-            const textLength = (node.label || '').length;
-            const estimatedTextWidth = textLength * (fontSize * 0.6);
-            node.width = Math.max(300, estimatedTextWidth + 60);
-            node.height = 60;
+            // 关键修复：保留已设置的宽度（来自 convertToConceptMapFormat），不要覆盖
+            // 用户要求焦点问题框使用固定的很长的宽度（1400px）
+            if (!node.width) {
+                // 仅当没有预设宽度时才计算
+                const fontSize = 18;
+                const textLength = (node.label || '').length;
+                const estimatedTextWidth = textLength * (fontSize * 0.6);
+                node.width = Math.max(300, estimatedTextWidth + 60);
+            }
+            if (!node.height) {
+                node.height = 60;
+            }
             
             node.x = centerX;
             node.y = focusQuestionY;
-            console.log(`Sugiyama: 焦点问题节点 "${node.label}" 坐标 (${node.x.toFixed(0)}, ${node.y.toFixed(0)})`);
+            console.log(`Sugiyama: 焦点问题节点 "${node.label}" 坐标 (${node.x.toFixed(0)}, ${node.y.toFixed(0)}), 宽度=${node.width}`);
         });
     }
     
@@ -282,17 +350,22 @@ function assignCoordinates(nodes, orderedLevels, width, height, links = []) {
         const totalSpacing = (levelNodes.length - 1) * nodeSpacing;
         let totalWidth = totalNodeWidth + totalSpacing;
         
-        // 确保不超出边界
-        const maxWidth = width - 2 * horizontalMargin;
-        if (totalWidth > maxWidth && levelNodes.length > 1) {
-            nodeSpacing = Math.max(20, (maxWidth - totalNodeWidth) / (levelNodes.length - 1));
+        // 计算可用宽度
+        const maxAvailableWidth = width - 2 * horizontalMargin;
+        
+        // 如果总宽度超出可用宽度，压缩间距使其适合
+        if (totalWidth > maxAvailableWidth && levelNodes.length > 1) {
+            const adjustedSpacing = (maxAvailableWidth - totalNodeWidth) / (levelNodes.length - 1);
+            nodeSpacing = Math.max(adjustedSpacing, 10); // 最小间距10px
+            // 重新计算总宽度
             totalWidth = totalNodeWidth + (levelNodes.length - 1) * nodeSpacing;
+            console.log(`Sugiyama: 第${level}层自适应间距: ${nodeSpacing.toFixed(1)}px`);
         }
         
-        // 居中
+        // 关键：以画布中心线为轴严格对称排布
+        // startX = centerX - totalWidth / 2，确保节点组以中心线为轴对称
         const centerX = width / 2;
-        let startX = centerX - totalWidth / 2;
-        if (startX < horizontalMargin) startX = horizontalMargin;
+        const startX = centerX - totalWidth / 2;
         
         let currentX = startX;
         
@@ -321,13 +394,15 @@ function assignCoordinates(nodes, orderedLevels, width, height, links = []) {
 
 /**
  * 优化父子节点位置对齐 - 让有连接关系的上下层节点在垂直方向上更接近
+ * 关键改进：子节点的X坐标尽量接近其父节点的X坐标，而不是均匀分布
+ * 注意：排除焦点问题节点（layer=0），它不参与对齐计算
  * @param {Array} nodes - 所有节点
  * @param {Array} links - 所有连接
  * @param {number} width - 画布宽度
  * @param {number} horizontalMargin - 水平边距
  */
 function optimizeParentChildAlignment(nodes, links, width, horizontalMargin) {
-    console.log('Sugiyama: 开始优化父子节点位置对齐...');
+    console.log('Sugiyama: 开始优化父子节点位置对齐（让子节点靠近父节点）...');
     
     if (!nodes || nodes.length === 0 || !links || links.length === 0) {
         console.log('没有节点或连接，跳过位置优化');
@@ -338,9 +413,13 @@ function optimizeParentChildAlignment(nodes, links, width, horizontalMargin) {
     const nodeById = new Map();
     nodes.forEach(node => nodeById.set(node.id, node));
     
-    // 按层级分组节点
+    // 按层级分组节点（排除焦点问题节点 layer=0）
     const layerNodes = new Map();
     nodes.forEach(node => {
+        // 跳过焦点问题节点
+        if (node.layer === 0 || node.isFocusQuestion) {
+            return;
+        }
         const layer = node.layer || 1;
         if (!layerNodes.has(layer)) {
             layerNodes.set(layer, []);
@@ -348,104 +427,299 @@ function optimizeParentChildAlignment(nodes, links, width, horizontalMargin) {
         layerNodes.get(layer).push(node);
     });
     
-    // 对每层节点按X坐标排序
-    layerNodes.forEach((nodesInLayer, layer) => {
-        nodesInLayer.sort((a, b) => a.x - b.x);
-    });
-    
-    // 获取所有层级，从第2层开始调整（第1层保持居中）
+    // 获取所有层级（只包含概念图节点的层级，不包含 layer=0）
     const sortedLayers = Array.from(layerNodes.keys()).sort((a, b) => a - b);
     
-    console.log('  进行父子节点位置优化...');
+    console.log('  概念图层级数:', sortedLayers.length, '层级:', sortedLayers);
     
-    // 从上到下调整：根据父节点位置调整子节点排序
-    for (let i = 1; i < sortedLayers.length; i++) {
+    // 最小节点间距
+    const minNodeGap = 30;
+    
+    // 从第二层开始遍历（第一层 layer=1 保持 assignCoordinates 的居中布局）
+    // 只对 layer >= 2 的节点进行父子对齐优化
+    for (let i = 0; i < sortedLayers.length; i++) {
         const currentLayer = sortedLayers[i];
+        
+        // 跳过第一层概念图节点（layer=1），它们应该保持居中
+        if (currentLayer <= 1) {
+            console.log(`  跳过第${currentLayer}层，保持居中布局`);
+            continue;
+        }
+        
         const currentNodes = layerNodes.get(currentLayer);
         
         if (!currentNodes || currentNodes.length === 0) continue;
         
-        // 计算每个节点的理想X位置（父节点的平均X位置）
-        const idealPositions = new Map();
+        // 第一步：计算每个节点的理想X位置（父节点的平均X位置）
+        const nodeIdealPositions = new Map();
         
         currentNodes.forEach(node => {
-            // 找到所有连接到该节点的父节点
+            // 找到所有连接到该节点的父节点（排除焦点问题节点）
             const parentNodes = [];
             links.forEach(link => {
-                if (link.target === node.id) {
-                    const parent = nodeById.get(link.source);
-                    if (parent && parent.layer < node.layer) {
+                const targetId = typeof link.target === 'string' ? link.target : link.target?.id;
+                const sourceId = typeof link.source === 'string' ? link.source : link.source?.id;
+                
+                if (targetId === node.id) {
+                    const parent = nodeById.get(sourceId);
+                    // 排除焦点问题节点作为父节点
+                    if (parent && parent.layer !== undefined && parent.layer >= 1 && parent.layer < node.layer) {
                         parentNodes.push(parent);
                     }
                 }
             });
             
+            // 计算理想X位置
+            let idealX;
             if (parentNodes.length > 0) {
-                // 计算父节点的平均X位置
-                const avgParentX = parentNodes.reduce((sum, p) => sum + p.x, 0) / parentNodes.length;
-                idealPositions.set(node.id, avgParentX);
+                // 使用父节点的平均X位置作为理想位置
+                idealX = parentNodes.reduce((sum, p) => sum + p.x, 0) / parentNodes.length;
+                console.log(`    节点 "${node.label}" 父节点: ${parentNodes.map(p => p.label).join(', ')}, 理想X: ${idealX.toFixed(0)}`);
             } else {
-                // 没有父节点的，使用当前位置作为理想位置
-                idealPositions.set(node.id, node.x);
+                // 没有有效父节点，保持当前位置
+                idealX = node.x;
+            }
+            
+            nodeIdealPositions.set(node.id, {
+                node: node,
+                idealX: idealX,
+                parentCount: parentNodes.length,
+                width: node.width || 100
+            });
+        });
+        
+        // 第二步：按理想X位置排序节点
+        const sortedNodes = [...currentNodes].sort((a, b) => {
+            const infoA = nodeIdealPositions.get(a.id);
+            const infoB = nodeIdealPositions.get(b.id);
+            return infoA.idealX - infoB.idealX;
+        });
+        
+        // 第三步：分配X坐标，尽量接近理想位置，同时避免重叠
+        // 使用贪心算法：按排序顺序依次放置，确保不重叠
+        const placedNodes = [];
+        
+        sortedNodes.forEach(node => {
+            const info = nodeIdealPositions.get(node.id);
+            const nodeWidth = info.width;
+            let targetX = info.idealX;
+            
+            // 检查是否与已放置的节点重叠，如果重叠则调整位置
+            let adjusted = false;
+            for (const placed of placedNodes) {
+                const placedWidth = nodeIdealPositions.get(placed.id).width;
+                const minDist = (nodeWidth + placedWidth) / 2 + minNodeGap;
+                const dist = Math.abs(targetX - placed.x);
+                
+                if (dist < minDist) {
+                    // 需要调整位置
+                    if (targetX >= placed.x) {
+                        // 当前节点在右边，向右推
+                        targetX = placed.x + minDist;
+                    } else {
+                        // 当前节点在左边，向左推
+                        targetX = placed.x - minDist;
+                    }
+                    adjusted = true;
+                }
+            }
+            
+            // 确保在画布边界内
+            const halfWidth = nodeWidth / 2;
+            if (targetX - halfWidth < horizontalMargin) {
+                targetX = horizontalMargin + halfWidth;
+            }
+            if (targetX + halfWidth > width - horizontalMargin) {
+                targetX = width - horizontalMargin - halfWidth;
+            }
+            
+            node.x = targetX;
+            placedNodes.push(node);
+            
+            if (adjusted) {
+                console.log(`    节点 "${node.label}" 调整后X: ${targetX.toFixed(0)} (理想: ${info.idealX.toFixed(0)})`);
             }
         });
         
-        // 按理想位置排序所有节点
-        const sortedCurrentNodes = [...currentNodes].sort((a, b) => {
-            const idealA = idealPositions.get(a.id) || a.x;
-            const idealB = idealPositions.get(b.id) || b.x;
-            return idealA - idealB;
-        });
+        // 第四步：解决重叠问题 - 再次检查并推开重叠的节点
+        resolveOverlaps(sortedNodes, nodeIdealPositions, minNodeGap, horizontalMargin, width);
         
-        // 重新分配X坐标，确保不重叠
-        const nodeWidths = sortedCurrentNodes.map(node => {
-            if (window.calculateNodeDimensions) {
-                const dim = window.calculateNodeDimensions(node.label || '', 90, 45, 20);
-                return node.width || dim.width;
-            }
-            return node.width || 100;
-        });
-        
-        const totalNodeWidth = nodeWidths.reduce((sum, w) => sum + w, 0);
-        
-        // 使用与原布局相同的间距逻辑
-        let nodeSpacing;
-        if (sortedCurrentNodes.length <= 1) {
-            nodeSpacing = 0;
-        } else if (sortedCurrentNodes.length === 2) {
-            nodeSpacing = 150;
-        } else if (sortedCurrentNodes.length <= 4) {
-            nodeSpacing = 120;
-        } else if (sortedCurrentNodes.length <= 6) {
-            nodeSpacing = 80;
-        } else if (sortedCurrentNodes.length <= 10) {
-            nodeSpacing = 55;
-        } else {
-            nodeSpacing = Math.max(30, 50 - (sortedCurrentNodes.length - 10) * 2);
-        }
-        
-        const totalSpacing = sortedCurrentNodes.length > 1 ? (sortedCurrentNodes.length - 1) * nodeSpacing : 0;
-        const totalWidth = totalNodeWidth + totalSpacing;
-        
-        // 居中计算起始位置
-        const centerX = width / 2;
-        let startX = centerX - totalWidth / 2;
-        if (startX < horizontalMargin) startX = horizontalMargin;
-        
-        // 直接分配新的X坐标，不使用平滑过渡（避免重叠）
-        let currentX = startX;
-        sortedCurrentNodes.forEach((node, idx) => {
-            const nodeWidth = nodeWidths[idx];
-            currentX += nodeWidth / 2;
-            node.x = currentX; // 直接赋值，确保不重叠
-            currentX += nodeWidth / 2 + nodeSpacing;
-        });
-        
-        // 更新layerNodes中的排序
-        layerNodes.set(currentLayer, sortedCurrentNodes);
+        // 更新layerNodes
+        layerNodes.set(currentLayer, sortedNodes);
     }
     
     console.log('Sugiyama: 父子节点位置对齐优化完成');
+}
+
+/**
+ * 解决节点重叠问题
+ * 注意：这个函数只解决重叠，不做居中。居中由 centerAllNodes 统一处理。
+ */
+function resolveOverlaps(nodes, nodeIdealPositions, minNodeGap, horizontalMargin, width) {
+    if (nodes.length <= 1) return;
+    
+    // 按X坐标排序
+    nodes.sort((a, b) => a.x - b.x);
+    
+    // 从左到右检查并推开重叠的节点
+    for (let i = 1; i < nodes.length; i++) {
+        const prevNode = nodes[i - 1];
+        const currNode = nodes[i];
+        
+        const prevWidth = nodeIdealPositions.get(prevNode.id).width;
+        const currWidth = nodeIdealPositions.get(currNode.id).width;
+        const minDist = (prevWidth + currWidth) / 2 + minNodeGap;
+        
+        if (currNode.x - prevNode.x < minDist) {
+            // 需要向右推
+            currNode.x = prevNode.x + minDist;
+        }
+    }
+    
+    // 检查是否超出边界，如果超出则压缩间距
+    const firstNode = nodes[0];
+    const lastNode = nodes[nodes.length - 1];
+    const firstWidth = nodeIdealPositions.get(firstNode.id).width;
+    const lastWidth = nodeIdealPositions.get(lastNode.id).width;
+    
+    const layerMinX = firstNode.x - firstWidth / 2;
+    const layerMaxX = lastNode.x + lastWidth / 2;
+    const layerWidth = layerMaxX - layerMinX;
+    
+    const availableWidth = width - 2 * horizontalMargin;
+    
+    // 如果层宽度超过可用宽度，需要压缩间距并居中
+    if (layerWidth > availableWidth) {
+        let totalNodeWidth = 0;
+        nodes.forEach(node => {
+            totalNodeWidth += nodeIdealPositions.get(node.id).width;
+        });
+        
+        const availableSpacing = availableWidth - totalNodeWidth;
+        const spacingPerGap = nodes.length > 1 ? availableSpacing / (nodes.length - 1) : 0;
+        const actualSpacing = Math.max(10, spacingPerGap);
+        
+        // 计算压缩后的总宽度，并居中分配
+        const compressedTotalWidth = totalNodeWidth + (nodes.length - 1) * actualSpacing;
+        const canvasCenter = width / 2;
+        let currentX = canvasCenter - compressedTotalWidth / 2;
+        
+        nodes.forEach(node => {
+            const nodeWidth = nodeIdealPositions.get(node.id).width;
+            currentX += nodeWidth / 2;
+            node.x = currentX;
+            currentX += nodeWidth / 2 + actualSpacing;
+        });
+    }
+}
+
+/**
+ * 检测聚合连接组（用于布局优化）
+ * 同一源节点、同一标签的多条连接为一个聚合组
+ * @param {Array} links - 所有连接
+ * @returns {Array} 聚合组数组，每个元素包含 {key, sourceId, label, targetIds}
+ */
+function detectAggregateGroupsForLayout(links) {
+    const groups = new Map();
+    
+    links.forEach(link => {
+        const label = link.label || '';
+        // 只对非空且有意义的连接词进行聚合
+        if (label && label.trim().length > 0 && label !== '双击编辑') {
+            const sourceId = typeof link.source === 'string' ? link.source : link.source?.id;
+            const targetId = typeof link.target === 'string' ? link.target : link.target?.id;
+            const key = `${sourceId}_${label}`;
+            
+            if (!groups.has(key)) {
+                groups.set(key, {
+                    key: key,
+                    sourceId: sourceId,
+                    label: label,
+                    targetIds: []
+                });
+            }
+            groups.get(key).targetIds.push(targetId);
+        }
+    });
+    
+    // 只返回有2个或更多目标的组（需要聚合）
+    return Array.from(groups.values()).filter(group => group.targetIds.length >= 2);
+}
+
+// ============================================================================
+// 居中所有节点
+// ============================================================================
+
+/**
+ * 将概念图节点整体居中于画布
+ * 注意：只居中概念图节点（layer >= 1），焦点问题节点（layer = 0）单独处理
+ * @param {Array} nodes - 所有节点
+ * @param {number} canvasWidth - 画布宽度
+ */
+function centerAllNodes(nodes, canvasWidth) {
+    console.log('Sugiyama: 开始居中概念图节点...');
+    
+    if (!nodes || nodes.length === 0) {
+        return;
+    }
+    
+    // 只计算概念图节点的边界（排除焦点问题节点 layer=0）
+    // 这样焦点问题框不会影响概念图的居中计算
+    let minX = Infinity, maxX = -Infinity;
+    let conceptNodeCount = 0;
+    
+    nodes.forEach(node => {
+        // 只处理概念图节点（layer >= 1 或 layer === undefined）
+        // 排除焦点问题节点（layer === 0 或 isFocusQuestion === true）
+        if (node.layer === 0 || node.isFocusQuestion) {
+            return; // 跳过焦点问题节点
+        }
+        
+        if (node.x !== undefined) {
+            const nodeWidth = node.width || 100;
+            minX = Math.min(minX, node.x - nodeWidth / 2);
+            maxX = Math.max(maxX, node.x + nodeWidth / 2);
+            conceptNodeCount++;
+        }
+    });
+    
+    if (minX === Infinity || maxX === -Infinity || conceptNodeCount === 0) {
+        console.log('Sugiyama: 没有有效概念图节点坐标，跳过居中');
+        return;
+    }
+    
+    // 计算概念图节点整体的中心
+    const nodesCenter = (minX + maxX) / 2;
+    
+    // 计算画布中心
+    const canvasCenter = canvasWidth / 2;
+    
+    // 计算需要的偏移量
+    const offsetX = canvasCenter - nodesCenter;
+    
+    console.log(`Sugiyama: 概念图节点数: ${conceptNodeCount}`);
+    console.log(`Sugiyama: 概念图边界 X:[${minX.toFixed(0)}, ${maxX.toFixed(0)}]`);
+    console.log(`Sugiyama: 概念图中心: ${nodesCenter.toFixed(0)}, 画布中心: ${canvasCenter.toFixed(0)}, 偏移: ${offsetX.toFixed(0)}`);
+    
+    // 如果偏移量太小，不需要调整
+    if (Math.abs(offsetX) < 5) {
+        console.log('Sugiyama: 概念图已居中，无需调整');
+        return;
+    }
+    
+    // 只平移概念图节点（layer >= 1），保持焦点问题节点位置不变
+    nodes.forEach(node => {
+        // 跳过焦点问题节点
+        if (node.layer === 0 || node.isFocusQuestion) {
+            return;
+        }
+        
+        if (node.x !== undefined) {
+            node.x += offsetX;
+        }
+    });
+    
+    console.log(`Sugiyama: 概念图节点已向${offsetX > 0 ? '右' : '左'}平移 ${Math.abs(offsetX).toFixed(0)}px`);
 }
 
 // ============================================================================
@@ -484,25 +758,25 @@ function adjustViewBox(nodes, baseWidth, baseHeight) {
     const bottomMargin = 80;
     
     // 计算内容边界（含边距）
-    const paddedMinX = minX - horizontalMargin;
-    const paddedMaxX = maxX + horizontalMargin;
     const paddedMinY = minY - topMargin;
     const paddedMaxY = maxY + bottomMargin;
     
-    const contentWidth = paddedMaxX - paddedMinX;
     const contentHeight = paddedMaxY - paddedMinY;
     
-    // 视口尺寸：至少为画布尺寸，同时覆盖内容
-    const viewWidth = Math.max(baseWidth, contentWidth);
+    // 视口尺寸
+    // 宽度：保持与布局使用的宽度一致，确保节点居中
+    const viewWidth = baseWidth;
+    // 高度：至少为基础高度，同时覆盖所有内容
     const viewHeight = Math.max(baseHeight, contentHeight);
     
-    // 计算内容中心，并将 viewBox 居中到内容
-    const centerX = (paddedMinX + paddedMaxX) / 2;
-    const centerY = (paddedMinY + paddedMaxY) / 2;
-    const viewBoxX = centerX - viewWidth / 2;
-    const viewBoxY = centerY - viewHeight / 2;
+    // 关键：viewBox 始终从 0 开始
+    // 因为 centerAllNodes 已经将节点居中于 baseWidth，所以 viewBoxX = 0
+    const viewBoxX = 0;
+    // Y轴：确保顶部有足够空间显示焦点问题
+    const viewBoxY = Math.min(0, paddedMinY);
     
     console.log(`Sugiyama: 节点边界 X:[${minX.toFixed(0)}, ${maxX.toFixed(0)}] Y:[${minY.toFixed(0)}, ${maxY.toFixed(0)}]`);
+    console.log(`Sugiyama: 节点中心 X: ${((minX + maxX) / 2).toFixed(0)}, 画布中心 X: ${(baseWidth / 2).toFixed(0)}`);
     console.log(`Sugiyama: ViewBox: ${viewBoxX.toFixed(0)} ${viewBoxY.toFixed(0)} ${viewWidth.toFixed(0)} ${viewHeight.toFixed(0)}`);
     
     // 更新 SVG viewBox
@@ -510,8 +784,9 @@ function adjustViewBox(nodes, baseWidth, baseHeight) {
                 document.querySelector('.concept-graph');
     if (svg) {
         svg.setAttribute('viewBox', `${viewBoxX} ${viewBoxY} ${viewWidth} ${viewHeight}`);
-        // 同时更新 SVG 的 width 属性，保持与视口宽度一致
+        // 保持 SVG 宽度与 viewBox 宽度一致
         svg.setAttribute('width', viewWidth);
+        svg.setAttribute('height', viewHeight);
     }
 }
 
@@ -531,7 +806,7 @@ function applySugiyamaLayout(graphData) {
     const nodes = graphData.nodes.map(n => ({ ...n }));
     const links = graphData.links.map(l => ({ ...l }));
     
-    // 获取画布尺寸
+    // 获取画布尺寸 - 关键：只使用 viewBox 的宽度，确保布局与视口对齐
     let width = 1600;
     let height = 800; // 使用合理的默认高度
     
@@ -545,11 +820,8 @@ function applySugiyamaLayout(graphData) {
                 // 不使用 viewBox 的高度，使用固定值
             }
         }
-        // 也尝试从 getBoundingClientRect 获取宽度
-        const rect = svg.getBoundingClientRect();
-        if (rect.width > 0) {
-            width = Math.max(width, rect.width);
-        }
+        // 注意：不使用 getBoundingClientRect，因为它返回的是渲染后的实际像素尺寸
+        // 而我们需要使用 viewBox 的逻辑尺寸来确保布局正确居中
     }
     
     console.log(`Sugiyama: 画布尺寸 ${width} x ${height}`);
@@ -559,9 +831,12 @@ function applySugiyamaLayout(graphData) {
     const orderedLevels = orderNodesInLayers(nodes, links, levels);
     assignCoordinates(nodes, orderedLevels, width, height, links);
     
-    // 优化父子节点位置对齐
-    const horizontalMargin = 50;
-    optimizeParentChildAlignment(nodes, links, width, horizontalMargin);
+    // 注意：不再调用 optimizeParentChildAlignment
+    // 按照 concept-map-new-master 的方式，让节点以画布中心线为轴对称排布
+    // 保持各个节点之间的距离相同（统一间距）
+    
+    // 全局居中（以画布中心线为轴对称，保证左右空隙一致）
+    centerAllNodes(nodes, width);
     
     // 调整 viewBox
     adjustViewBox(nodes, width, height);
@@ -605,5 +880,6 @@ function applySugiyamaLayout(graphData) {
 if (typeof window !== 'undefined') {
     window.applySugiyamaLayout = applySugiyamaLayout;
     window.adjustViewBox = adjustViewBox;
+    window.centerAllNodes = centerAllNodes;
     console.log('✅ Sugiyama布局算法已注册到全局作用域');
 }

@@ -37,6 +37,7 @@ class FocusQuestionService:
         self,
         text: str,
         language: str = 'zh',
+        model: str = 'qwen',
         max_retries: int = 2
     ) -> Dict[str, any]:
         """
@@ -45,12 +46,13 @@ class FocusQuestionService:
         Args:
             text: User input text
             language: Language ('zh' or 'en')
+            model: LLM model to use (default: 'qwen')
             max_retries: Maximum retry attempts
             
         Returns:
             Dict with 'success', 'focus_question', 'message' keys
         """
-        logger.info(f"[FocusQuestionService] Extracting focus question, text length: {len(text)}")
+        logger.info(f"[FocusQuestionService] Extracting focus question, text length: {len(text)}, model: {model}")
         
         if not text or len(text.strip()) == 0:
             return {
@@ -67,10 +69,10 @@ class FocusQuestionService:
                 prompt = self._build_focus_question_prompt(text, language)
                 system_prompt = self._build_system_prompt(language)
                 
-                # Call LLM
+                # Call LLM with user-selected model
                 response = await self.llm_service.chat(
                     prompt=prompt,
-                    model='qwen-turbo',  # Use turbo for faster classification
+                    model=model,
                     system_message=system_prompt,
                     temperature=0.3,
                     max_tokens=100

@@ -683,97 +683,240 @@ class LLMAutoCompleteManager {
     
     /**
      * Handle concept map generation from focus question (移植自concept-map-new-master)
+     * 
+     * UPDATED: Now supports parallel multi-model generation like other diagram types.
+     * Uses the same flow: callMultipleModels() -> cache results -> allow user to switch
+     * 
+     * Preserves original:
+     * - Three-step workflow (extract focus question -> generate introduction -> extract triples)
+     * - Sugiyama hierarchical layout algorithm
+     * - Original prompts in services/introduction_service.py and services/triple_extraction_service.py
      */
     async handleConceptMapFocusQuestionGeneration(focusQuestion, language) {
-        this.logger.info('LLMAutoCompleteManager', 'Starting focus question concept map generation', {
+        this.logger.info('LLMAutoCompleteManager', 'Starting multi-model focus question concept map generation', {
             focusQuestion,
             language
         });
         
+        // Store context for session verification
+        const currentSessionId = this.editor?.sessionId;
+        const currentDiagramType = 'concept_map';
+        
+        // Clear previous results
+        this.resultCache.clear();
+        this.selectedLLM = null;
+        
+        // Define all models to call in parallel (same as other diagram types)
+        let models = ['qwen', 'deepseek', 'kimi', 'hunyuan', 'doubao'];
+        
+        // Catapult mode: exclude model that was already used for initial generation
+        if (window._autoCompleteExcludeModel) {
+            const excludeModel = window._autoCompleteExcludeModel;
+            models = models.filter(m => m !== excludeModel);
+            this.logger.info('LLMAutoCompleteManager', `Concept map catapult mode: excluding ${excludeModel}, running ${models.length} models`);
+            window._autoCompleteExcludeModel = null;
+        } else {
+            this.logger.info('LLMAutoCompleteManager', `Concept map: running all ${models.length} models in parallel`);
+        }
+        
+        // Show loading state for all models
+        if (this.toolbarManager) {
+            this.toolbarManager.showNotification(
+                language === 'zh' ? '正在使用多个AI模型生成概念图...' : 'Generating concept map with multiple AI models...',
+                'info'
+            );
+        }
+        if (this.progressRenderer) {
+            this.progressRenderer.setAllLLMButtonsLoading(true, models);
+        }
+        
+        // Emit generation started event
+        if (this.eventBus) {
+            this.eventBus.emit('llm:generation_started', {
+                models: models,
+                diagramType: currentDiagramType,
+                focusQuestion: focusQuestion,
+                language: language
+            });
+        }
+        
         try {
-            // Call the focus question generation API
-            const response = await fetch('/api/generate_concept_map_from_focus_question', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
-                    text: focusQuestion,
-                    language: language,
-                    extract_focus_question: false  // Use text directly as focus question
-                })
+            // Call all models in parallel using Promise.allSettled
+            const promises = models.map(model => 
+                this._callConceptMapModelAPI(model, focusQuestion, language)
+            );
+            
+            const results = await Promise.allSettled(promises);
+            
+            // Process results
+            results.forEach((result, index) => {
+                const model = models[index];
+                
+                if (result.status === 'fulfilled' && result.value.success) {
+                    // Success - cache and update UI
+                    const modelResult = {
+                        model: model,
+                        success: true,
+                        result: {
+                            spec: result.value.spec,
+                            diagram_type: 'concept_map'
+                        }
+                    };
+                    
+                    // Cache result
+                    if (this.resultCache) {
+                        this.resultCache.store(model, modelResult);
+                    }
+                    
+                    // Update button state
+                    if (this.progressRenderer) {
+                        this.progressRenderer.setLLMButtonState(model, 'ready');
+                    }
+                    
+                    // Auto-render first successful result
+                    if (!this.selectedLLM && this._isActive()) {
+                        this.selectedLLM = model;
+                        this._renderConceptMapResult(modelResult, currentSessionId);
+                        this.updateLLMButtonStates();
+                        
+                        // Also update toolbarManager.selectedLLM for consistency
+                        if (this.toolbarManager) {
+                            this.toolbarManager.selectedLLM = model;
+                        }
+                    }
+                    
+                    this.logger.info('LLMAutoCompleteManager', `Concept map ${model} succeeded`, {
+                        conceptCount: result.value.spec?.concepts?.length || 0
+                    });
+                    
+                } else {
+                    // Error
+                    const errorMsg = result.status === 'rejected' 
+                        ? result.reason?.message 
+                        : (result.value?.error || 'Unknown error');
+                    
+                    this.logger.error('LLMAutoCompleteManager', `Concept map ${model} failed: ${errorMsg}`);
+                    
+                    if (this.progressRenderer) {
+                        this.progressRenderer.setLLMButtonState(model, 'error');
+                    }
+                }
             });
             
-            if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
-            }
-            
-            const result = await response.json();
-            
-            if (!result.success) {
-                const errorMsg = result.error || '生成失败';
-                this.toolbarManager.showNotification(
-                    language === 'zh' ? `生成失败: ${errorMsg}` : `Generation failed: ${errorMsg}`,
+            // Show completion notification
+            const successCount = results.filter(r => r.status === 'fulfilled' && r.value?.success).length;
+            if (successCount > 0) {
+                this.toolbarManager?.showNotification(
+                    language === 'zh' 
+                        ? `概念图生成完成 (${successCount}/${models.length} 个模型成功)` 
+                        : `Concept map generated (${successCount}/${models.length} models succeeded)`,
+                    'success'
+                );
+            } else {
+                this.toolbarManager?.showNotification(
+                    language === 'zh' ? '所有模型生成失败' : 'All models failed',
                     'error'
                 );
-                this.isAutoCompleting = false;
-                return;
             }
             
-            // Get the generated spec
-            const generatedSpec = result.spec || result;
-            
-            // Get editor instance (try this.editor first, then window.currentEditor as fallback)
-            const editor = this.editor || window.currentEditor;
-            
-            if (!editor) {
-                throw new Error('Editor not available');
-            }
-            
-            // Update editor with generated spec (use same method as renderCachedLLMResult)
-            editor.currentSpec = generatedSpec;
-            editor.diagramType = 'concept_map';
-            editor.renderDiagram();
-            
-            this.logger.info('LLMAutoCompleteManager', 'Concept map generated and rendered successfully', {
-                focusQuestion: focusQuestion,
-                conceptCount: generatedSpec?.concepts?.length || 0
-            });
-            
-            // Emit result rendered event
+            // Emit completion event
             if (this.eventBus) {
-                this.eventBus.emit('llm:result_rendered', {
-                    model: 'focus_question',
-                    diagramType: 'concept_map',
-                    nodeCount: generatedSpec?.concepts?.length || 0
+                this.eventBus.emit('llm:generation_completed', {
+                    diagramType: currentDiagramType,
+                    successCount: successCount,
+                    totalModels: models.length
                 });
             }
             
-            // Fit to window after render completes
-            setTimeout(() => {
-                if (this.eventBus) {
-                    this.eventBus.emit('view:fit_diagram_requested');
-                } else if (editor && typeof editor.fitDiagramToWindow === 'function') {
-                    editor.fitDiagramToWindow();
-                }
-            }, 300);
-            
-            // Show success notification
-            this.toolbarManager.showNotification(
-                language === 'zh' ? '概念图生成成功' : 'Concept map generated successfully',
-                'success'
-            );
-            
-            this.isAutoCompleting = false;
-            
         } catch (error) {
-            this.logger.error('LLMAutoCompleteManager', 'Focus question generation failed', error);
-            this.toolbarManager.showNotification(
+            this.logger.error('LLMAutoCompleteManager', 'Concept map multi-model generation failed', error);
+            this.toolbarManager?.showNotification(
                 language === 'zh' ? `生成失败: ${error.message}` : `Generation failed: ${error.message}`,
                 'error'
             );
+        } finally {
             this.isAutoCompleting = false;
         }
+    }
+    
+    /**
+     * Call concept map generation API for a single model
+     * 
+     * This preserves the original three-step workflow:
+     * 1. Extract focus question (if needed)
+     * 2. Generate introduction text
+     * 3. Extract triples from introduction
+     * 
+     * The backend handles all this via ConceptMapAgent.generate_from_focus_question()
+     */
+    async _callConceptMapModelAPI(model, focusQuestion, language) {
+        const response = await window.auth.fetch('/api/generate_concept_map_from_focus_question', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                text: focusQuestion,
+                language: language,
+                llm: model,  // Pass specific model
+                extract_focus_question: false  // Use text directly as focus question
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        return await response.json();
+    }
+    
+    /**
+     * Render concept map result from cached model result
+     */
+    _renderConceptMapResult(result, expectedSessionId) {
+        // Safety check
+        if (!this._isActive() || !this.editor) {
+            return;
+        }
+        
+        // Verify session hasn't changed
+        if (this.editor.sessionId !== expectedSessionId) {
+            this.logger.warn('LLMAutoCompleteManager', 'Session changed during concept map rendering');
+            return;
+        }
+        
+        const spec = result.result?.spec;
+        if (!spec) {
+            this.logger.error('LLMAutoCompleteManager', 'No spec in concept map result');
+            return;
+        }
+        
+        // Update editor with generated spec
+        this.editor.currentSpec = spec;
+        this.editor.diagramType = 'concept_map';
+        this.editor.renderDiagram();
+        
+        this.logger.info('LLMAutoCompleteManager', `Concept map rendered from ${result.model}`, {
+            conceptCount: spec?.concepts?.length || 0
+        });
+        
+        // Emit result rendered event
+        if (this.eventBus) {
+            this.eventBus.emit('llm:result_rendered', {
+                model: result.model,
+                diagramType: 'concept_map',
+                nodeCount: spec?.concepts?.length || 0
+            });
+        }
+        
+        // Fit to window after render
+        setTimeout(() => {
+            if (this.eventBus) {
+                this.eventBus.emit('view:fit_diagram_requested');
+            } else if (this.editor && typeof this.editor.fitDiagramToWindow === 'function') {
+                this.editor.fitDiagramToWindow();
+            }
+        }, 300);
     }
 }
 

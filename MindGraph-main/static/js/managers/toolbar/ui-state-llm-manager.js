@@ -448,6 +448,12 @@ class UIStateLLMManager {
                     this.editor.modules.llmAutoComplete.selectedLLM = llmModel;
                 }
                 
+                // CRITICAL FIX: Also update toolbarManager.selectedLLM for concept map generation
+                // This ensures handleConceptMapFocusQuestionGeneration() gets the correct model
+                if (this.toolbarManager) {
+                    this.toolbarManager.selectedLLM = llmModel;
+                }
+                
                 // Update button states via Event Bus
                 window.eventBus.emit('autocomplete:update_button_states_requested', {});
                 
@@ -497,6 +503,13 @@ class UIStateLLMManager {
             if (this.editor?.modules?.llmAutoComplete) {
                 this.editor.modules.llmAutoComplete.selectedLLM = llmModel;
             }
+            
+            // CRITICAL FIX: Also update toolbarManager.selectedLLM for concept map generation
+            // This ensures handleConceptMapFocusQuestionGeneration() gets the correct model
+            if (this.toolbarManager) {
+                this.toolbarManager.selectedLLM = llmModel;
+            }
+            
             // Update button states to show selection
             window.eventBus.emit('autocomplete:update_button_states_requested', {});
         }

@@ -33,6 +33,7 @@ class TripleExtractionService:
         self,
         intro_text: str,
         language: str = 'zh',
+        model: str = 'qwen',
         stream: bool = False
     ) -> Dict[str, any]:
         """
@@ -41,12 +42,13 @@ class TripleExtractionService:
         Args:
             intro_text: Introduction text
             language: Language ('zh' or 'en')
+            model: LLM model to use (default: 'qwen')
             stream: Whether to stream the response
             
         Returns:
             Dict with 'success', 'triples', 'message' keys
         """
-        logger.info(f"[TripleExtractionService] Extracting triples, text length: {len(intro_text)}")
+        logger.info(f"[TripleExtractionService] Extracting triples, text length: {len(intro_text)}, model: {model}")
         
         if not intro_text or len(intro_text.strip()) == 0:
             return {
@@ -64,7 +66,7 @@ class TripleExtractionService:
                 full_response = ""
                 async for chunk in self.llm_service.chat_stream(
                     prompt=prompt,
-                    model='qwen-plus',
+                    model=model,  # Use user-selected model
                     temperature=0.3,
                     max_tokens=2000
                 ):
@@ -77,7 +79,7 @@ class TripleExtractionService:
                 # Non-stream response
                 response = await self.llm_service.chat(
                     prompt=prompt,
-                    model='qwen-plus',
+                    model=model,  # Use user-selected model
                     temperature=0.3,
                     max_tokens=2000
                 )

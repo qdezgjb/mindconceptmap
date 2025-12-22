@@ -269,19 +269,21 @@ async def generate_concept_map_from_focus_question(
     This endpoint implements the focus question generation feature from concept-map-new-master.
     """
     
-    # Get language
+    # Get language and model (same pattern as /generate_graph)
     language = req.language.value if hasattr(req.language, 'value') else str(req.language)
+    llm_model = req.llm.value if hasattr(req.llm, 'value') else str(req.llm)
     lang = get_request_language(x_language, language)
     
     request_id = str(uuid.uuid4())
-    logger.info(f"[{request_id}] Focus question concept map generation request")
-    logger.debug(f"[{request_id}] Text length: {len(req.text)}, Extract focus question: {req.extract_focus_question}")
+    logger.info(f"[{request_id}] Focus question concept map generation request, LLM model: {llm_model}")
+    logger.info(f"[{request_id}] Text length: {len(req.text)}, Extract focus question: {req.extract_focus_question}")
     
     try:
         # Import concept map agent
         from agents.concept_maps.concept_map_agent import ConceptMapAgent
         
-        agent = ConceptMapAgent()
+        # Pass model parameter to agent (same pattern as other diagram agents)
+        agent = ConceptMapAgent(model=llm_model)
         
         # Determine focus question
         if req.extract_focus_question:

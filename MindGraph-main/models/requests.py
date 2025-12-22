@@ -139,6 +139,7 @@ class FocusQuestionGenerateRequest(BaseModel):
     """Request model for /api/generate_concept_map_from_focus_question endpoint"""
     text: str = Field(..., min_length=1, max_length=10000, description="User input text or focus question")
     language: Language = Field(Language.ZH, description="Language for processing")
+    llm: LLMModel = Field(LLMModel.QWEN, description="LLM model to use for generation")
     extract_focus_question: bool = Field(True, description="Whether to extract focus question from text (if False, treat text as focus question directly)")
     
     class Config:
@@ -146,6 +147,7 @@ class FocusQuestionGenerateRequest(BaseModel):
             "example": {
                 "text": "人工智能是计算机科学的一个分支，致力于开发能够执行通常需要人类智能的任务的系统",
                 "language": "zh",
+                "llm": "qwen",
                 "extract_focus_question": True
             }
         }

@@ -34,6 +34,7 @@ class IntroductionService:
         self,
         keyword: str,
         language: str = 'zh',
+        model: str = 'qwen',
         stream: bool = False
     ) -> Dict[str, any]:
         """
@@ -42,12 +43,13 @@ class IntroductionService:
         Args:
             keyword: Focus question keyword
             language: Language ('zh' or 'en')
+            model: LLM model to use (default: 'qwen')
             stream: Whether to stream the response
             
         Returns:
             Dict with 'success', 'text', 'message' keys
         """
-        logger.info(f"[IntroductionService] Generating introduction for keyword: {keyword}")
+        logger.info(f"[IntroductionService] Generating introduction for keyword: {keyword}, model: {model}")
         
         if not keyword or len(keyword.strip()) == 0:
             return {
@@ -66,7 +68,7 @@ class IntroductionService:
                 full_text = ""
                 async for chunk in self.llm_service.chat_stream(
                     prompt=prompt,
-                    model='qwen-plus',  # Use plus for better generation quality
+                    model=model,  # Use user-selected model
                     system_message=system_prompt,
                     temperature=0.7,
                     max_tokens=800
@@ -84,7 +86,7 @@ class IntroductionService:
                 # Non-stream response
                 response = await self.llm_service.chat(
                     prompt=prompt,
-                    model='qwen-plus',
+                    model=model,  # Use user-selected model
                     system_message=system_prompt,
                     temperature=0.7,
                     max_tokens=800
@@ -115,7 +117,8 @@ class IntroductionService:
     async def generate_introduction_stream(
         self,
         keyword: str,
-        language: str = 'zh'
+        language: str = 'zh',
+        model: str = 'qwen'
     ) -> AsyncGenerator[str, None]:
         """
         Stream introduction text generation.
@@ -123,11 +126,12 @@ class IntroductionService:
         Args:
             keyword: Focus question keyword
             language: Language ('zh' or 'en')
+            model: LLM model to use (default: 'qwen')
             
         Yields:
             Text chunks as they are generated
         """
-        logger.info(f"[IntroductionService] Streaming introduction for keyword: {keyword}")
+        logger.info(f"[IntroductionService] Streaming introduction for keyword: {keyword}, model: {model}")
         
         if not keyword or len(keyword.strip()) == 0:
             yield ""
@@ -140,7 +144,7 @@ class IntroductionService:
             
             async for chunk in self.llm_service.chat_stream(
                 prompt=prompt,
-                model='qwen-plus',
+                model=model,  # Use user-selected model
                 system_message=system_prompt,
                 temperature=0.7,
                 max_tokens=800

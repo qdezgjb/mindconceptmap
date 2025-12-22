@@ -252,7 +252,7 @@ class ConceptMapAgent(BaseAgent):
             dict: Standard format with success, spec, and diagram_type
         """
         try:
-            logger.info(f"ConceptMapAgent: Starting concept map generation for prompt: {user_prompt[:100]}...")
+            logger.info(f"ConceptMapAgent: Starting concept map generation for prompt: {user_prompt[:100]}..., model: {self.model}")
             
             # Generate the concept map specification using LLM
             spec = await self._generate_concept_map_spec(
@@ -316,53 +316,40 @@ class ConceptMapAgent(BaseAgent):
         """
         Generate the concept map specification using LLM.
         
-        完全移植自concept-map-new-master的通信方式：
-        1. 使用concept-map的提示词构建方式（buildConceptPrompt）
-        2. 直接使用提示词作为user_prompt，不使用system_message
-        3. 解析JSON响应的方式与concept-map一致（从响应中提取JSON）
-        4. 将nodes/links格式转换为MindGraph的topic/concepts/relationships格式
+        与其他图示（bubble_map, tree_map等）使用相同的交互模式：
+        1. 使用 get_prompt() 从集中式提示词系统获取 system_prompt
+        2. 构建简单的 user_prompt
+        3. 使用 system_message=system_prompt 调用 LLM
+        4. 使用标准的 extract_json_from_response() 解析 JSON
+        5. 直接返回 spec，不需要格式转换
         """
         try:
-            # 构建提示词（完全按照concept-map的方式）
-            from prompts.concept_maps import CONCEPT_MAP_PROMPTS
+            # Import centralized prompt system (same as other diagram agents)
+            from prompts import get_prompt
             
-            # 判断是keyword类型还是description类型
-            # 简单判断：如果prompt很短（<50字符）且不包含标点，可能是keyword
-            is_keyword = len(prompt) < 50 and not any(p in prompt for p in ['。', '.', '，', ',', '；', ';'])
+            # Get prompt from centralized system - use agent-specific format
+            system_prompt = get_prompt("concept_map_agent", language, "generation")
             
-            if is_keyword and language == 'zh':
-                # 使用keyword类型的提示词
-                prompt_template = CONCEPT_MAP_PROMPTS.get("concept_map_keyword_prompt_zh")
-                if prompt_template:
-                    full_prompt = prompt_template.format(keyword=prompt)
-                else:
-                    # Fallback to description prompt
-                    prompt_template = CONCEPT_MAP_PROMPTS.get("concept_map_description_prompt_zh")
-                    if prompt_template:
-                        full_prompt = prompt_template.format(description=prompt)
-                    else:
-                        logger.error(f"ConceptMapAgent: No concept-map style prompt found")
-                        return None
+            if not system_prompt:
+                logger.error(f"ConceptMapAgent: No prompt found for language {language}")
+                return None
+            
+            # Build user prompt (same pattern as other diagram agents)
+            if language == "zh":
+                user_prompt = f"请为以下描述创建一个概念图：{prompt}"
             else:
-                # 使用description类型的提示词
-                prompt_template = CONCEPT_MAP_PROMPTS.get("concept_map_description_prompt_zh")
-                if prompt_template:
-                    full_prompt = prompt_template.format(description=prompt)
-                else:
-                    logger.error(f"ConceptMapAgent: No concept-map style prompt found")
-                    return None
+                user_prompt = f"Please create a concept map for the following description: {prompt}"
             
-            # 调用llm_service（完全按照concept-map的方式：直接使用提示词，不使用system_message）
+            # Call middleware directly - clean and efficient! (same as BubbleMapAgent, TreeMapAgent, etc.)
             from services.llm_service import llm_service
             from config.settings import config
             
             response = await llm_service.chat(
-                prompt=full_prompt,  # 直接使用完整提示词
+                prompt=user_prompt,
                 model=self.model,
-                system_message=None,  # 不使用system_message，完全按照concept-map的方式
-                max_tokens=4000,  # concept-map需要更多tokens
-                temperature=0.3,  # 使用concept-map的temperature设置
-                timeout=60.0,  # 60秒超时
+                system_message=system_prompt,  # Use system_message like other agents
+                max_tokens=2000,  # Reasonable token limit like other agents
+                temperature=config.LLM_TEMPERATURE,  # Use global config like other agents
                 # Token tracking parameters
                 user_id=user_id,
                 organization_id=organization_id,
@@ -371,93 +358,25 @@ class ConceptMapAgent(BaseAgent):
                 diagram_type='concept_map'
             )
             
-            # 解析响应（完全按照concept-map的方式）
-            response_str = str(response)
+            # Extract JSON from response (same pattern as other diagram agents)
+            from ..core.agent_utils import extract_json_from_response
             
-            # 从响应中提取JSON（concept-map的方式：查找第一个{和最后一个}）
-            start_idx = response_str.find('{')
-            end_idx = response_str.rfind('}') + 1
-            
-            if start_idx == -1 or end_idx == 0:
-                logger.error(f"ConceptMapAgent: No JSON found in response")
-                logger.debug(f"Response preview: {response_str[:500]}")
-                return None
-            
-            json_content = response_str[start_idx:end_idx]
-            
-            try:
-                import json
-                concept_map_data = json.loads(json_content)
-            except json.JSONDecodeError as e:
-                logger.error(f"ConceptMapAgent: Failed to parse JSON: {e}")
-                logger.debug(f"JSON content: {json_content[:500]}")
-                return None
-            
-            # 将concept-map的nodes/links格式转换为MindGraph的topic/concepts/relationships格式
-            nodes = concept_map_data.get("nodes", [])
-            links = concept_map_data.get("links", [])
-            
-            if not nodes:
-                logger.error(f"ConceptMapAgent: No nodes found in response")
-                return None
-            
-            # 找到L1层的节点作为topic
-            topic_node = None
-            for node in nodes:
-                if node.get("layer") == 1 or node.get("type") == "main":
-                    topic_node = node
-                    break
-            
-            if not topic_node:
-                # 如果没有找到L1节点，使用第一个节点
-                topic_node = nodes[0]
-            
-            topic = topic_node.get("label", "")
-            
-            # 提取所有非topic节点作为concepts
-            concepts = []
-            node_id_to_label = {}  # 用于映射id到label
-            
-            for node in nodes:
-                node_id = node.get("id", "")
-                node_label = node.get("label", "")
-                node_layer = node.get("layer", 0)
-                node_type = node.get("type", "")
+            # Check if response is already a dictionary (from mock client)
+            if isinstance(response, dict):
+                spec = response
+            else:
+                # Try to extract JSON from string response
+                response_str = str(response)
+                spec = extract_json_from_response(response_str)
                 
-                # 记录id到label的映射
-                node_id_to_label[node_id] = node_label
-                
-                # 如果不是topic节点，添加到concepts
-                if node_label != topic:
-                    concepts.append(node_label)
+                if not spec:
+                    # Log the actual response for debugging
+                    response_preview = response_str[:500] + "..." if len(response_str) > 500 else response_str
+                    logger.error(f"ConceptMapAgent: Failed to extract JSON from LLM response. Response preview: {response_preview}")
+                    return None
             
-            # 转换links为relationships
-            relationships = []
-            for link in links:
-                source_id = str(link.get("source", ""))
-                target_id = str(link.get("target", ""))
-                label = link.get("label", "")
-                
-                # 从id映射到label
-                source_label = node_id_to_label.get(source_id, "")
-                target_label = node_id_to_label.get(target_id, "")
-                
-                if source_label and target_label and label:
-                    relationships.append({
-                        "from": source_label,
-                        "to": target_label,
-                        "label": label
-                    })
-            
-            # 构建MindGraph格式的spec
-            spec = {
-                "topic": topic,
-                "concepts": concepts,
-                "relationships": relationships
-            }
-            
-            logger.info(f"ConceptMapAgent: Successfully converted concept-map format to MindGraph format")
-            logger.debug(f"Topic: {topic}, Concepts: {len(concepts)}, Relationships: {len(relationships)}")
+            logger.info(f"ConceptMapAgent: Successfully generated concept map spec using model: {self.model}")
+            logger.debug(f"Topic: {spec.get('topic')}, Concepts: {len(spec.get('concepts', []))}, Relationships: {len(spec.get('relationships', []))}")
             
             return spec
             
@@ -488,39 +407,19 @@ class ConceptMapAgent(BaseAgent):
             dict: Graph specification with styling and metadata
         """
         try:
-            logger.info(f"[ConceptMapAgent] Generating from focus question: {focus_question}")
+            logger.info(f"[ConceptMapAgent] Generating from focus question: {focus_question}, using model: {self.model}")
             
             # Import services
-            from services.focus_question_service import focus_question_service
             from services.introduction_service import introduction_service
             from services.triple_extraction_service import triple_extraction_service
             
-            # Step 1: Extract focus question (if needed)
-            # Check if input is already a question or needs extraction
-            # Simple heuristic: check for question markers
-            is_question = any(q in focus_question for q in ['是什么', '怎么样', '有哪些', '如何', '怎样', '为什么', 
-                                                           'what', 'how', 'why', 'which', '?', '？'])
+            # 直接使用用户输入的焦点问题，不再进行提取
+            # 用户输入什么就用什么，保持原样
+            logger.info(f"[ConceptMapAgent] Using user input directly as focus question: {focus_question}")
             
-            if not is_question:
-                # Extract focus question from text
-                logger.info(f"[ConceptMapAgent] Input is not a question, extracting focus question...")
-                extract_result = await focus_question_service.extract_focus_question(
-                    focus_question, language=language
-                )
-                if not extract_result.get('success'):
-                    return {
-                        'success': False,
-                        'error': f"Failed to extract focus question: {extract_result.get('error')}",
-                        'spec': None
-                    }
-                focus_question = extract_result['focus_question']
-                logger.info(f"[ConceptMapAgent] Extracted focus question: {focus_question}")
-            else:
-                logger.info(f"[ConceptMapAgent] Using input directly as focus question: {focus_question}")
-            
-            # Step 2: Generate introduction text
+            # Step 2: Generate introduction text (use user-selected model)
             intro_result = await introduction_service.generate_introduction(
-                focus_question, language=language, stream=False
+                focus_question, language=language, model=self.model, stream=False
             )
             if not intro_result.get('success'):
                 return {
@@ -531,9 +430,9 @@ class ConceptMapAgent(BaseAgent):
             intro_text = intro_result['text']
             logger.info(f"[ConceptMapAgent] Generated introduction, length: {len(intro_text)}")
             
-            # Step 3: Extract triples from introduction
+            # Step 3: Extract triples from introduction (use user-selected model)
             triple_result = await triple_extraction_service.extract_triples(
-                intro_text, language=language, stream=False
+                intro_text, language=language, model=self.model, stream=False
             )
             if not triple_result.get('success'):
                 return {

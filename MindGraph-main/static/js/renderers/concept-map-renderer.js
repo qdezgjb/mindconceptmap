@@ -422,9 +422,11 @@ function convertToConceptMapFormat(spec) {
         label: focusQuestionLabel,
         layer: 0,  // 焦点问题在最顶层
         type: 'focus-question',
-        isFocusQuestion: true
+        isFocusQuestion: true,
+        width: 1400,  // 固定宽度 1400px
+        height: 60    // 固定高度 60px
     });
-    console.log(`  添加焦点问题节点: id=${topicId}, label=${focusQuestionLabel}, layer=0`);
+    console.log(`  添加焦点问题节点: id=${topicId}, label=${focusQuestionLabel}, layer=0, width=1400`);
         
     // 添加概念节点
     console.log('convertToConceptMapFormat: 开始添加概念节点，数量:', spec.concepts ? spec.concepts.length : 0);
@@ -493,6 +495,17 @@ function convertToConceptMapFormat(spec) {
             }
             
             if (sourceId && targetId) {
+                // 🔴🔴🔴 移植自 concept-map-new-master：禁止生成到焦点问题框的连接线
+                // 焦点问题框应该是独立的 UI 元素，不参与图的连接关系
+                if (targetId === 'focus-question-node') {
+                    console.warn(`  ❌ 关系${i}被跳过: 禁止连接到焦点问题框 (${fromLabel} -> ${toLabel})`);
+                    return; // 跳过指向焦点问题节点的连线
+                }
+                if (sourceId === 'focus-question-node') {
+                    console.warn(`  ❌ 关系${i}被跳过: 禁止从焦点问题框出发 (${fromLabel} -> ${toLabel})`);
+                    return; // 跳过从焦点问题节点出发的连线
+                }
+                
                 links.push({
                     id: `link-${i}`,
                     source: sourceId,
@@ -698,15 +711,11 @@ function drawNodes(svg, nodes, topic) {
         // 计算节点尺寸
         let dims;
         if (isFocusQuestion) {
-            // 焦点问题节点：根据字数动态调整宽度，保证两边留出空隙
-            const fontSize = 18;
-            const textLength = nodeLabel.length;
-            const charWidth = fontSize * 0.55; // 中文字符宽度估算
-            const estimatedTextWidth = textLength * charWidth;
-            const padding = 50; // 两边各留出25px的空隙
+            // 焦点问题节点样式 - 固定宽度，大大加长
+            // 用户要求：焦点问题框长度设为固定值并且大大加长
             dims = {
-                width: Math.max(200, estimatedTextWidth + padding),
-                height: 50
+                width: 1400, // 固定宽度 1400px，足够容纳很长的文本
+                height: 60 // 高度60
             };
         } else {
             dims = calculateNodeDimensions(nodeLabel);
@@ -714,7 +723,7 @@ function drawNodes(svg, nodes, topic) {
         const nodeWidth = node.width || dims.width;
         const nodeHeight = node.height || dims.height;
         const isTopic = nodeLabel === topic;
-        const radius = isFocusQuestion ? 12 : 10;
+        const radius = isFocusQuestion ? 10 : 10; // 移植：统一圆角10
         
         // 创建圆角矩形
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
@@ -725,19 +734,19 @@ function drawNodes(svg, nodes, topic) {
         rect.setAttribute('rx', radius);
         rect.setAttribute('ry', radius);
         
-        // 焦点问题节点使用特殊样式
+        // 焦点问题节点使用特殊样式（移植自 concept-map-new-master）
         if (isFocusQuestion) {
-            rect.setAttribute('fill', '#5a4fcf');
-            rect.setAttribute('fill-opacity', '0.95');
-            rect.setAttribute('stroke', '#fff');
-            rect.setAttribute('stroke-width', '3');
+            rect.setAttribute('fill', '#f8f9fa'); // 移植：浅灰色背景
+            rect.setAttribute('fill-opacity', '0.9'); // 移植：透明度0.9
+            rect.setAttribute('stroke', '#667eea'); // 移植：紫蓝色边框
+            rect.setAttribute('stroke-width', '2'); // 移植：边框宽度2
         } else {
             rect.setAttribute('fill', isTopic ? '#5a4fcf' : '#667eea');
             rect.setAttribute('fill-opacity', '0.9');
             rect.setAttribute('stroke', '#fff');
             rect.setAttribute('stroke-width', isTopic ? '3' : '2');
         }
-        rect.setAttribute('cursor', 'pointer');
+        rect.setAttribute('cursor', isFocusQuestion ? 'move' : 'pointer'); // 移植：拖拽光标
         g.appendChild(rect);
         
         // 创建文字
@@ -746,9 +755,9 @@ function drawNodes(svg, nodes, topic) {
         text.setAttribute('y', 0);
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('dominant-baseline', 'middle');
-        text.setAttribute('font-size', isFocusQuestion ? '18' : (isTopic ? '16' : '14'));
+        text.setAttribute('font-size', isFocusQuestion ? '28' : (isTopic ? '16' : '14')); // 移植：字体大小28
         text.setAttribute('font-weight', isFocusQuestion ? '600' : (isTopic ? '600' : '500'));
-        text.setAttribute('fill', 'white');
+        text.setAttribute('fill', isFocusQuestion ? '#2c3e50' : 'white'); // 移植：深灰色文字
         text.setAttribute('pointer-events', 'none');
         text.textContent = nodeLabel;
         g.appendChild(text);
@@ -817,8 +826,10 @@ function detectAggregatedLinks(links) {
  * @param {Object} group - 聚合连接组 {sourceId, label, links: [...]}
  * @param {Map} nodeById - 节点Map
  * @param {Array} allNodes - 所有节点数组
+ * @param {number} offsetIndex - 同一源节点的聚合组索引（用于偏移计算）
+ * @param {number} totalGroups - 同一源节点的聚合组总数
  */
-function drawAggregatedLink(svg, group, nodeById, allNodes) {
+function drawAggregatedLink(svg, group, nodeById, allNodes, offsetIndex = 0, totalGroups = 1) {
     const sourceNode = nodeById.get(group.sourceId);
     if (!sourceNode) {
         console.warn('drawAggregatedLink: 源节点未找到', group.sourceId);
@@ -846,8 +857,12 @@ function drawAggregatedLink(svg, group, nodeById, allNodes) {
     
     if (targetNodes.length === 0) return;
     
-    // 计算源节点底部中心点
-    const sourceX = sourceNode.x;
+    // 需求：同一源节点有多个聚合连接时，连线需从同一点出发
+    // 因此关闭横向偏移，所有聚合线共用源节点中心
+    const horizontalOffset = 0;
+    
+    // 计算源节点底部中心点（加上横向偏移）
+    const sourceX = sourceNode.x + horizontalOffset;
     const sourceY = sourceNode.y + sourceHeight / 2;
     
     // 计算目标节点的平均连接点（目标节点顶部中心）
@@ -1095,7 +1110,26 @@ function optimizeLabelPositions(nodes, links) {
 // ============================================================================
 
 function drawLinks(svg, nodes, links, topic) {
-    console.log('drawLinks: 渲染连线，数量:', links.length);
+    console.log('drawLinks: 渲染连线，原始数量:', links.length);
+    
+    // 🔴🔴🔴 移植自 concept-map-new-master：禁止生成到焦点问题框的连接线
+    // 焦点问题框应该是独立的 UI 元素，不参与图的连接关系
+    const filteredLinks = links.filter(link => {
+        const targetId = getLinkNodeId(link.target);
+        const sourceId = getLinkNodeId(link.source);
+        // 过滤掉目标是焦点问题节点的连接线
+        if (targetId === 'focus-question-node') {
+            console.log(`drawLinks: 过滤掉指向焦点问题框的连接线: ${sourceId} -> ${targetId}`);
+            return false;
+        }
+        // 过滤掉源是焦点问题节点的连接线（焦点问题框不应该有任何连接）
+        if (sourceId === 'focus-question-node') {
+            console.log(`drawLinks: 过滤掉从焦点问题框出发的连接线: ${sourceId} -> ${targetId}`);
+            return false;
+        }
+        return true;
+    });
+    console.log(`drawLinks: 过滤后连线数量: ${filteredLinks.length}（过滤了 ${links.length - filteredLinks.length} 条指向/来自焦点问题框的连线）`);
     
     // 调试：输出前3个节点的坐标
     console.log('drawLinks: 节点坐标检查（前3个）:');
@@ -1115,8 +1149,8 @@ function drawLinks(svg, nodes, links, topic) {
     const oldAggregateGroups = svg.querySelectorAll('g[data-aggregate-group="true"]');
     oldAggregateGroups.forEach(g => g.remove());
     
-    // 检测聚合连接
-    const aggregatedLinks = detectAggregatedLinks(links);
+    // 检测聚合连接（使用过滤后的连线）
+    const aggregatedLinks = detectAggregatedLinks(filteredLinks);
     
     // 创建已聚合连线的ID集合与源-目标对集合
     const aggregatedLinkIds = new Set();
@@ -1130,13 +1164,29 @@ function drawLinks(svg, nodes, links, topic) {
         });
     });
     
-    // 先绘制聚合连接
+    // 先绘制聚合连接（处理同一源节点有多个聚合组的情况，添加偏移避免重叠）
+    // 按源节点分组，计算每个源节点有多少个聚合组
+    const sourceGroupCount = new Map();
     aggregatedLinks.forEach(group => {
-        drawAggregatedLink(svg, group, nodeById, nodes);
+        const count = sourceGroupCount.get(group.sourceId) || 0;
+        sourceGroupCount.set(group.sourceId, count + 1);
     });
     
-    // 过滤掉已聚合的连线
-    const regularLinks = links.filter(link => {
+    // 记录每个源节点当前的索引
+    const sourceGroupIndex = new Map();
+    aggregatedLinks.forEach(group => {
+        const currentIndex = sourceGroupIndex.get(group.sourceId) || 0;
+        const totalGroups = sourceGroupCount.get(group.sourceId) || 1;
+        
+        // 绘制聚合连接，传入索引和总数用于偏移计算
+        drawAggregatedLink(svg, group, nodeById, nodes, currentIndex, totalGroups);
+        
+        // 更新索引
+        sourceGroupIndex.set(group.sourceId, currentIndex + 1);
+    });
+    
+    // 过滤掉已聚合的连线（使用过滤后的连线列表）
+    const regularLinks = filteredLinks.filter(link => {
         if (aggregatedLinkIds.has(link.id)) return false;
         const s = getLinkNodeId(link.source);
         const t = getLinkNodeId(link.target);
@@ -2040,6 +2090,20 @@ function updateConnectedLinks(nodeId) {
                group.links.some(link => getLinkNodeId(link.target) === nodeId);
     });
     
+    // 找到所有需要重绘的聚合组（包括同一源节点的所有聚合组）
+    // 关键修复：如果删除了某个源节点的聚合组，需要重绘该源节点的所有聚合组
+    const affectedSourceIds = new Set();
+    relatedAggregateGroups.forEach(group => {
+        affectedSourceIds.add(group.sourceId);
+    });
+    // 当前节点本身也是潜在的源节点
+    affectedSourceIds.add(nodeId);
+    
+    // 找到所有需要重绘的聚合组（同一源节点的所有聚合组都要重绘）
+    const groupsToRedraw = aggregatedLinks.filter(group => {
+        return affectedSourceIds.has(group.sourceId);
+    });
+    
     // 更新聚合连接（重绘整个组）
     const nodeById = new Map();
     currentGraphData.nodes.forEach(node => {
@@ -2050,10 +2114,8 @@ function updateConnectedLinks(nodeId) {
     const allAggregateGroups = svg.querySelectorAll('g[data-aggregate-group="true"]');
     allAggregateGroups.forEach(aggregateGroup => {
         const sourceId = aggregateGroup.getAttribute('data-source-id');
-        // 检查该聚合连接组是否与当前节点相关
-        const isRelated = sourceId === nodeId || 
-            relatedAggregateGroups.some(g => g.sourceId === sourceId);
-        if (isRelated) {
+        // 检查该聚合连接组是否需要重绘
+        if (affectedSourceIds.has(sourceId)) {
             aggregateGroup.remove();
         }
     });
@@ -2062,9 +2124,26 @@ function updateConnectedLinks(nodeId) {
     const zoomGroup = svg.querySelector('g.zoom-group');
     const container = zoomGroup || svg;
     
-    // 重新绘制相关的聚合连接
-    relatedAggregateGroups.forEach(group => {
-        drawAggregatedLink(container, group, nodeById, currentGraphData.nodes);
+    // 重新绘制所有需要重绘的聚合连接（处理同一源节点有多个聚合组的情况，添加偏移避免重叠）
+    // 按源节点分组，计算每个源节点有多少个聚合组
+    const sourceGroupCount = new Map();
+    aggregatedLinks.forEach(group => {
+        const count = sourceGroupCount.get(group.sourceId) || 0;
+        sourceGroupCount.set(group.sourceId, count + 1);
+    });
+    
+    // 记录每个源节点当前的索引
+    const sourceGroupIndex = new Map();
+    // 关键修复：重绘所有受影响的聚合组，而不仅仅是直接相关的聚合组
+    groupsToRedraw.forEach(group => {
+        const currentIndex = sourceGroupIndex.get(group.sourceId) || 0;
+        const totalGroups = sourceGroupCount.get(group.sourceId) || 1;
+        
+        // 绘制聚合连接，传入索引和总数用于偏移计算
+        drawAggregatedLink(container, group, nodeById, currentGraphData.nodes, currentIndex, totalGroups);
+        
+        // 更新索引
+        sourceGroupIndex.set(group.sourceId, currentIndex + 1);
     });
     
     // 更新普通连线（排除已聚合的连线）
@@ -2433,12 +2512,10 @@ function editConceptNodeText(nodeId) {
     }
     
     // 计算焦点问题节点尺寸
+    // 关键修复：使用固定宽度 1400px
     function calculateFocusQuestionDimensions(text) {
-        const fontSize = 18;
-        const textLength = text.length;
-        const estimatedTextWidth = textLength * (fontSize * 0.6);
-        const width = Math.max(300, estimatedTextWidth + 60);
-        const height = 60;
+        const width = 1400; // 固定宽度 1400px
+        const height = 60; // 固定高度 60px
         return { width, height };
     }
 
@@ -2478,8 +2555,9 @@ function selectConceptNode(nodeId) {
     allNodes.forEach(nodeGroup => {
         const rect = nodeGroup.querySelector('rect');
         if (rect) {
-            // 恢复白色边框
-            rect.setAttribute('stroke', '#fff');
+            // 恢复默认边框（焦点问题框使用紫蓝色边框，其他节点使用白色边框）
+            const isFocusQuestion = nodeGroup.getAttribute('data-node-id') === 'focus-question-node';
+            rect.setAttribute('stroke', isFocusQuestion ? '#667eea' : '#fff');
             rect.setAttribute('stroke-width', '2');
         }
         // 移除之前节点的控制手柄
@@ -2531,7 +2609,9 @@ function deselectConceptNode() {
     allNodes.forEach(nodeGroup => {
         const rect = nodeGroup.querySelector('rect');
         if (rect) {
-            rect.setAttribute('stroke', '#fff');
+            // 恢复默认边框（焦点问题框使用紫蓝色边框，其他节点使用白色边框）
+            const isFocusQuestion = nodeGroup.getAttribute('data-node-id') === 'focus-question-node';
+            rect.setAttribute('stroke', isFocusQuestion ? '#667eea' : '#fff');
             rect.setAttribute('stroke-width', '2');
         }
         // 移除控制手柄
@@ -2806,6 +2886,15 @@ function createConceptLink(sourceId, targetId) {
         return;
     }
     
+    // 🔴 禁止创建与焦点问题框相关的连线
+    if (sourceId === 'focus-question-node' || targetId === 'focus-question-node') {
+        console.warn('ConceptMap: 禁止创建与焦点问题框相关的连线');
+        if (typeof showMessage === 'function') {
+            showMessage('焦点问题框不能与其他节点建立连接');
+        }
+        return;
+    }
+    
     if (!currentGraphData.links) {
         currentGraphData.links = [];
     }
@@ -2863,6 +2952,12 @@ function drawSingleLink(link) {
     
     const sourceId = getLinkNodeId(link.source);
     const targetId = getLinkNodeId(link.target);
+    
+    // 🔴 禁止绘制与焦点问题框相关的连线
+    if (sourceId === 'focus-question-node' || targetId === 'focus-question-node') {
+        console.log(`drawSingleLink: 跳过与焦点问题框相关的连线: ${sourceId} -> ${targetId}`);
+        return;
+    }
     
     const source = currentGraphData?.nodes?.find(n => n.id === sourceId);
     const target = currentGraphData?.nodes?.find(n => n.id === targetId);
@@ -3116,10 +3211,9 @@ function addFocusQuestionNode(focusQuestion) {
     if (existingFocusNode) {
         // 更新现有焦点问题节点
         existingFocusNode.label = `焦点问题：${focusQuestion.trim()}`;
-        // 重新计算宽度，避免长文本溢出
-        const fontSize = 18;
-        const newWidth = Math.max(320, (existingFocusNode.label.length * fontSize * 0.70) + 120);
-        const newHeight = 50;
+        // 关键修复：使用固定宽度 1400px
+        const newWidth = 1400; // 固定宽度 1400px
+        const newHeight = 60; // 固定高度 60px
         existingFocusNode.width = newWidth;
         existingFocusNode.height = newHeight;
         // 更新 DOM
@@ -3163,15 +3257,11 @@ function addFocusQuestionNode(focusQuestion) {
         }
     }
     
-    // 计算焦点问题节点尺寸（初步估算，后续用真实宽度再调整）
+    // 计算焦点问题节点尺寸
+    // 关键修复：使用固定宽度 1400px，确保焦点问题框足够长
     const focusLabel = `焦点问题：${focusQuestion.trim()}`;
-    const fontSize = 18;
-    const textLength = focusLabel.length;
-    const charWidth = fontSize * 0.70; // 更宽的估算，避免长文本溢出
-    const estimatedTextWidth = textLength * charWidth;
-    const padding = 120;
-    const nodeWidth = Math.max(320, estimatedTextWidth + padding);
-    const nodeHeight = 50;
+    const nodeWidth = 1400; // 固定宽度 1400px，用户要求的很长的焦点问题框
+    const nodeHeight = 60; // 固定高度 60px
     
     // 焦点问题节点位置（画布顶部中央）
     const x = svgWidth / 2;
@@ -3201,30 +3291,30 @@ function addFocusQuestionNode(focusQuestion) {
         g.setAttribute('data-node-id', focusNode.id);
         g.setAttribute('transform', `translate(${focusNode.x}, ${focusNode.y})`);
         
-        // 创建圆角矩形
+        // 创建圆角矩形（移植自 concept-map-new-master 样式）
         const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
         rect.setAttribute('x', -nodeWidth / 2);
         rect.setAttribute('y', -nodeHeight / 2);
         rect.setAttribute('width', nodeWidth);
         rect.setAttribute('height', nodeHeight);
-        rect.setAttribute('rx', 12);
-        rect.setAttribute('ry', 12);
-        rect.setAttribute('fill', '#5a4fcf');
-        rect.setAttribute('fill-opacity', '0.95');
-        rect.setAttribute('stroke', '#fff');
-        rect.setAttribute('stroke-width', '3');
-        rect.setAttribute('cursor', 'pointer');
+        rect.setAttribute('rx', 10); // 移植：圆角从12改为10
+        rect.setAttribute('ry', 10);
+        rect.setAttribute('fill', '#f8f9fa'); // 移植：浅灰色背景
+        rect.setAttribute('fill-opacity', '0.9'); // 移植：透明度0.9
+        rect.setAttribute('stroke', '#667eea'); // 移植：紫蓝色边框
+        rect.setAttribute('stroke-width', '2'); // 移植：边框宽度2
+        rect.setAttribute('cursor', 'move'); // 移植：拖拽光标
         g.appendChild(rect);
         
-        // 创建文字
+        // 创建文字（移植自 concept-map-new-master 样式）
         const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         text.setAttribute('x', 0);
         text.setAttribute('y', 0);
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('dominant-baseline', 'middle');
-        text.setAttribute('font-size', '18');
+        text.setAttribute('font-size', '28'); // 移植：字体大小28
         text.setAttribute('font-weight', '600');
-        text.setAttribute('fill', 'white');
+        text.setAttribute('fill', '#2c3e50'); // 移植：深灰色文字
         text.setAttribute('pointer-events', 'none');
         text.textContent = focusLabel;
         g.appendChild(text);
@@ -3253,7 +3343,7 @@ function addFocusQuestionNode(focusQuestion) {
 }
 
 /**
- * 根据文字真实尺寸调整焦点问题框大小
+ * 根据文字真实尺寸调整焦点问题框大小（移植自 concept-map-new-master）
  * @param {SVGGElement} focusGroup 
  * @param {Object} focusNode 数据对象（含 label、width、height）
  */
@@ -3263,11 +3353,9 @@ function resizeFocusGroup(focusGroup, focusNode) {
     const rectEl = focusGroup.querySelector('rect');
     if (!textEl || !rectEl) return;
 
-    // 获取文字真实宽度
-    const bbox = textEl.getBBox ? textEl.getBBox() : { width: focusNode.width || 200 };
-    const padding = 120;
-    const newWidth = Math.max(320, bbox.width + padding);
-    const newHeight = focusNode.height || 50;
+    // 关键修复：使用固定宽度 1400px，不再根据文字宽度动态计算
+    const newWidth = 1400; // 固定宽度 1400px
+    const newHeight = 60; // 固定高度 60px
 
     rectEl.setAttribute('width', newWidth);
     rectEl.setAttribute('height', newHeight);
