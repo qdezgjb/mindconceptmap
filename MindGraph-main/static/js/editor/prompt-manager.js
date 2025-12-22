@@ -22,6 +22,16 @@ class PromptManager {
     }
     
     /**
+     * 简单检测：是否是概念图相关的用户输入
+     * 规则：包含“概念图”“focus question”“焦点问题”或“concept map”相关关键词
+     */
+    isConceptMapPrompt(promptText = '') {
+        const text = promptText.toLowerCase();
+        const keywords = ['概念图', 'concept map', 'concept-map', 'conceptmap', 'focus question', '焦点问题'];
+        return keywords.some(k => text.includes(k.toLowerCase()));
+    }
+    
+    /**
      * Initialize DOM elements
      */
     initializeElements() {
@@ -104,22 +114,40 @@ class PromptManager {
             // Get current language
             const language = window.languageManager?.currentLanguage || 'en';
             
+            // 检测是否为概念图相关输入，自动走概念图生成流程
+            const isConceptMap = this.isConceptMapPrompt(prompt);
+            
             // ALWAYS use Qwen for initial prompt generation (fast, reliable)
-            // Then catapult the other 3 LLMs in background after canvas loads
             const initialLLM = 'qwen';
             
-            // Send to AI generation endpoint
-            const response = await auth.fetch('/api/generate_graph', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json'
-                },
-                body: JSON.stringify({
+            // 如果是概念图，改为调用焦点问题工作流专用接口
+            let response;
+            if (isConceptMap) {
+                // 概念图：直接走焦点问题工作流
+                const focusReq = {
+                    text: prompt,              // 原始用户输入
+                    language: language,
+                    llm: initialLLM,
+                    extract_focus_question: true
+                };
+                response = await auth.fetch('/api/generate_concept_map_from_focus_question', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(focusReq)
+                });
+            } else {
+                // 非概念图：走通用生成
+                const requestBody = {
                     prompt: prompt,
                     language: language,
-                    llm: initialLLM  // Force Qwen for prompt-based generation
-                })
-            });
+                    llm: initialLLM,  // Force Qwen for prompt-based generation
+                };
+                response = await auth.fetch('/api/generate_graph', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+            }
             
             if (!response.ok) {
                 throw new Error(`HTTP error! status: ${response.status}`);
@@ -171,6 +199,27 @@ class PromptManager {
             // Hide loading spinner immediately so user sees canvas right away
             // Auto-complete will enrich it in the background
             this.hideLoadingSpinner();
+            
+            // 概念图：提前保存焦点问题，确保进入编辑器后立刻有焦点问题框
+            if (isConceptMap) {
+                const fq = data?.focus_question || data?.extracted_topic || prompt;
+                window.focusQuestion = fq;
+                // 如果概念图模板需要立即渲染焦点问题节点，进入编辑器后 addFocusQuestionNode 会被调用
+                // 确保标记为概念图类型
+                if (!data.diagram_type) data.diagram_type = 'concept_map';
+                // 触发默认模板路径，便于后续自动补全并行多模型
+                data.use_default_template = true;
+                // 没有 spec 时提供空骨架，后续自动补全会填充
+                if (!data.spec) {
+                    data.spec = {
+                        topic: fq,
+                        concepts: [],
+                        relationships: []
+                    };
+                }
+                // 写入 extracted_topic，便于模板替换
+                if (!data.extracted_topic) data.extracted_topic = fq;
+            }
             
             // Transition to editor with generated diagram
             this.transitionToEditorWithDiagram(data);
@@ -346,6 +395,17 @@ class PromptManager {
                     template.dimension = extractedTopic;
                     logger.info('PromptManager', `Bridge map: dimension="${extractedTopic}"`);
                 }
+                
+            } else if (normalizedType === 'concept_map') {
+                // 概念图：只设置焦点问题，清空默认的占位符节点
+                // 因为概念图的节点会由 LLM 生成，不需要默认的"概念1"、"概念2"等占位符
+                template.topic = extractedTopic;
+                template.concepts = [];  // 清空默认占位符节点
+                template.relationships = [];  // 清空默认关系
+                if (template._layout) {
+                    template._layout.positions = {};  // 清空布局位置
+                }
+                logger.info('PromptManager', `Concept map: topic="${extractedTopic}", cleared default placeholders`);
                 
             } else {
                 // Standard handling for other diagram types

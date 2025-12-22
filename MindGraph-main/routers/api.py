@@ -281,14 +281,27 @@ async def generate_concept_map_from_focus_question(
     try:
         # Import concept map agent
         from agents.concept_maps.concept_map_agent import ConceptMapAgent
+        from services.focus_question_service import focus_question_service
         
         # Pass model parameter to agent (same pattern as other diagram agents)
         agent = ConceptMapAgent(model=llm_model)
         
         # Determine focus question
         if req.extract_focus_question:
-            # Extract focus question from text
-            focus_question = req.text
+            # Extract focus question from user input using LLM
+            # e.g., "生成加里奥对线狐狸的概念图" -> "加里奥如何对线狐狸"
+            extract_result = await focus_question_service.extract_focus_question(
+                text=req.text,
+                language=language,
+                model=llm_model
+            )
+            if extract_result.get('success') and extract_result.get('focus_question'):
+                focus_question = extract_result['focus_question']
+                logger.info(f"[{request_id}] Extracted focus question: {focus_question}")
+            else:
+                # Fallback: use original text if extraction fails
+                focus_question = req.text
+                logger.warning(f"[{request_id}] Focus question extraction failed, using original text")
         else:
             # Use text directly as focus question
             focus_question = req.text
@@ -314,8 +327,11 @@ async def generate_concept_map_from_focus_question(
         if 'diagram_type' not in result:
             result['diagram_type'] = 'concept_map'
         result['method'] = 'focus_question_workflow'
+        # 确保返回提取的焦点问题（而非用户原始输入）
+        result['focus_question'] = focus_question
+        result['extracted_topic'] = focus_question
         
-        logger.info(f"[{request_id}] Successfully generated concept map from focus question")
+        logger.info(f"[{request_id}] Successfully generated concept map from focus question: {focus_question}")
         return GenerateResponse(**result)
         
     except HTTPException:

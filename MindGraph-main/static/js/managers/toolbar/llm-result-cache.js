@@ -21,7 +21,8 @@ class LLMResultCache {
         this.timestamps = {};
         
         // Configuration
-        this.ttlMs = options.ttlMs || 10 * 60 * 1000; // 10 minutes default
+        // 缓存过期时间延长到60分钟，避免用户查看/比较模型结果时缓存过早失效
+        this.ttlMs = options.ttlMs || 60 * 60 * 1000; // 60 minutes (1 hour) default
         this.maxResults = options.maxResults || 5; // Max 5 models (qwen, deepseek, kimi, hunyuan, doubao)
         
         this.logger.debug('LLMResultCache', 'Cache initialized', {

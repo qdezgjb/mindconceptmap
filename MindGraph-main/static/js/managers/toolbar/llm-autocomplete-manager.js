@@ -709,15 +709,14 @@ class LLMAutoCompleteManager {
         // Define all models to call in parallel (same as other diagram types)
         let models = ['qwen', 'deepseek', 'kimi', 'hunyuan', 'doubao'];
         
-        // Catapult mode: exclude model that was already used for initial generation
+        // 概念图：所有模型都参与完整生成，不再排除首发模型
+        // 这样用户切换到任何模型都能看到完整质量的结果
         if (window._autoCompleteExcludeModel) {
-            const excludeModel = window._autoCompleteExcludeModel;
-            models = models.filter(m => m !== excludeModel);
-            this.logger.info('LLMAutoCompleteManager', `Concept map catapult mode: excluding ${excludeModel}, running ${models.length} models`);
+            // 清除标记但不排除，让所有模型都重新生成
+            this.logger.info('LLMAutoCompleteManager', `Concept map: clearing exclude flag, all ${models.length} models will generate (including ${window._autoCompleteExcludeModel})`);
             window._autoCompleteExcludeModel = null;
-        } else {
-            this.logger.info('LLMAutoCompleteManager', `Concept map: running all ${models.length} models in parallel`);
         }
+        this.logger.info('LLMAutoCompleteManager', `Concept map: running all ${models.length} models in parallel`);
         
         // Show loading state for all models
         if (this.toolbarManager) {
