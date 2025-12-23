@@ -16,19 +16,67 @@ function assignLayers(nodes, links) {
     const nodeMap = new Map();
     nodes.forEach(node => nodeMap.set(node.id, node));
     
+    // 🔴 检测聚合连接，用于层级约束
+    const aggregatedLinks = detectAggregateGroupsForLayout(links);
+    console.log(`Sugiyama: 检测到 ${aggregatedLinks.length} 组聚合连接`);
+    
     // 检查是否已有层级信息（包括 layer=0 的焦点问题节点）
     const nodesWithLayer = nodes.filter(node => node.layer !== undefined && node.layer >= 0);
     
     if (nodesWithLayer.length > 0) {
         console.log(`Sugiyama: 检测到 ${nodesWithLayer.length} 个节点已有layer属性`);
         
-        const levels = new Map();
+        // 先设置默认层级
         nodes.forEach(node => {
             // layer=0 是焦点问题节点，保持不变
             // layer=undefined 的节点设为 layer=1
             if (node.layer === undefined) {
                 node.layer = 1;
             }
+        });
+        
+        // 🔴 聚合连接约束：确保聚合连接的目标节点在源节点的下层
+        if (aggregatedLinks.length > 0) {
+            console.log('Sugiyama: 应用聚合连接层级约束...');
+            let adjusted = true;
+            let iterations = 0;
+            const maxIterations = 10; // 防止无限循环
+            
+            while (adjusted && iterations < maxIterations) {
+                adjusted = false;
+                iterations++;
+                
+                aggregatedLinks.forEach(group => {
+                    const sourceNode = nodeMap.get(group.sourceId);
+                    if (!sourceNode) return;
+                    
+                    const sourceLayer = sourceNode.layer;
+                    // 焦点问题节点(layer=0)不参与聚合约束
+                    if (sourceLayer === 0) return;
+                    
+                    group.targetIds.forEach(targetId => {
+                        const targetNode = nodeMap.get(targetId);
+                        if (!targetNode) return;
+                        
+                        // 如果目标节点的层级不大于源节点，则调整
+                        if (targetNode.layer <= sourceLayer) {
+                            const oldLayer = targetNode.layer;
+                            targetNode.layer = sourceLayer + 1;
+                            console.log(`  Sugiyama聚合约束: 将节点"${targetNode.label}"从layer=${oldLayer}调整到layer=${targetNode.layer}（源节点"${sourceNode.label}"在layer=${sourceLayer}）`);
+                            adjusted = true;
+                        }
+                    });
+                });
+            }
+            
+            if (iterations >= maxIterations) {
+                console.warn('Sugiyama: 聚合连接层级约束调整达到最大迭代次数');
+            }
+        }
+        
+        // 使用调整后的layer值分配levels
+        const levels = new Map();
+        nodes.forEach(node => {
             // 使用 layer 值作为 level（焦点问题节点 layer=0 -> level=0）
             const level = node.layer;
             if (!levels.has(level)) {
@@ -100,6 +148,49 @@ function assignLayers(nodes, links) {
         console.log(`Sugiyama: 发现 ${isolatedNodes.length} 个孤立节点`);
         isolatedNodes.forEach(node => node.layer = currentLevel + 1);
         levels.set(currentLevel, isolatedNodes);
+    }
+    
+    // 🔴 BFS分配后应用聚合连接约束
+    if (aggregatedLinks.length > 0) {
+        console.log('Sugiyama BFS后应用聚合连接层级约束...');
+        let adjusted = true;
+        let iterations = 0;
+        const maxIterations = 10;
+        
+        while (adjusted && iterations < maxIterations) {
+            adjusted = false;
+            iterations++;
+            
+            aggregatedLinks.forEach(group => {
+                const sourceNode = nodeMap.get(group.sourceId);
+                if (!sourceNode) return;
+                
+                const sourceLayer = sourceNode.layer;
+                if (sourceLayer === 0) return; // 跳过焦点问题节点
+                
+                group.targetIds.forEach(targetId => {
+                    const targetNode = nodeMap.get(targetId);
+                    if (!targetNode) return;
+                    
+                    if (targetNode.layer <= sourceLayer) {
+                        const oldLayer = targetNode.layer;
+                        targetNode.layer = sourceLayer + 1;
+                        console.log(`  Sugiyama聚合约束(BFS): 将节点"${targetNode.label}"从layer=${oldLayer}调整到layer=${targetNode.layer}`);
+                        adjusted = true;
+                    }
+                });
+            });
+        }
+        
+        // 重建levels Map
+        levels.clear();
+        nodes.forEach(node => {
+            const level = node.layer;
+            if (!levels.has(level)) {
+                levels.set(level, []);
+            }
+            levels.get(level).push(node);
+        });
     }
     
     console.log(`Sugiyama: 层次分配完成，共 ${levels.size} 层`);

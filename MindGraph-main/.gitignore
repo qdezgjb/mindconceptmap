@@ -98,9 +98,9 @@ yarn-error.log*
 # .dockerignore
 
 # Environment variables
-.env
-.env.local
-.env.*.local
+# .env  # 已取消限制，注意：请勿在公开仓库中暴露敏感信息
+# .env.local
+# .env.*.local
 
 # API Keys and sensitive data
 *API_KEY*.txt

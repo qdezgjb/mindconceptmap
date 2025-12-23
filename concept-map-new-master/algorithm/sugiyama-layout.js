@@ -16,6 +16,10 @@ function assignLayers(nodes, links) {
         nodeMap.set(node.id, node);
     });
     
+    // 🔴 检测聚合连接，用于层级约束
+    const aggregatedLinks = detectAggregatedLinksForLayout(links);
+    console.log(`检测到 ${aggregatedLinks.length} 组聚合连接`);
+    
     // 检查是否所有节点都已经有layer属性
     const nodesWithLayer = nodes.filter(node => node.layer !== undefined && node.layer >= 1);
     const useExistingLayers = nodesWithLayer.length > 0;
@@ -27,12 +31,49 @@ function assignLayers(nodes, links) {
             console.log(`  - ${node.label}: layer=${node.layer}, id=${node.id}`);
         });
         
-        // ⚠️ 重要：冻结节点的layer属性，防止被意外修改
-        // 使用节点已有的layer属性进行分配，绝不调整层级
+        // 🔴 聚合连接约束：确保聚合连接的目标节点在源节点的下层
+        if (aggregatedLinks.length > 0) {
+            console.log('应用聚合连接层级约束...');
+            let adjusted = true;
+            let iterations = 0;
+            const maxIterations = 10; // 防止无限循环
+            
+            while (adjusted && iterations < maxIterations) {
+                adjusted = false;
+                iterations++;
+                
+                aggregatedLinks.forEach(group => {
+                    const sourceNode = nodeMap.get(group.sourceId);
+                    if (!sourceNode) return;
+                    
+                    const sourceLayer = sourceNode.layer || 1;
+                    
+                    group.links.forEach(link => {
+                        const targetId = link.target;
+                        const targetNode = nodeMap.get(targetId);
+                        if (!targetNode) return;
+                        
+                        // 如果目标节点的层级不大于源节点，则调整
+                        if (targetNode.layer <= sourceLayer) {
+                            const oldLayer = targetNode.layer;
+                            targetNode.layer = sourceLayer + 1;
+                            console.log(`  聚合约束: 将节点"${targetNode.label}"从layer=${oldLayer}调整到layer=${targetNode.layer}（源节点"${sourceNode.label}"在layer=${sourceLayer}）`);
+                            adjusted = true;
+                        }
+                    });
+                });
+            }
+            
+            if (iterations >= maxIterations) {
+                console.warn('聚合连接层级约束调整达到最大迭代次数');
+            }
+        }
+        
+        // ⚠️ 重要：使用调整后的layer属性进行分配
         const levels = new Map();
         
         nodes.forEach(node => {
-            // 严格保持节点原有的 layer 值，不做任何调整
+            // 使用调整后的 layer 值
             const nodeLayer = node.layer;
             
             // 验证 layer 值的有效性（移除层级上限限制，支持任意层数）
@@ -48,9 +89,6 @@ function assignLayers(nodes, links) {
                 levels.set(level, []);
             }
             levels.get(level).push(node);
-            
-            // ⚠️ 关键：这里不再重新赋值 node.layer，避免任何可能的修改
-            // node.layer 保持其原始值不变
         });
         
         console.log(`使用现有层级分配完成，共${levels.size}层`);
@@ -145,6 +183,49 @@ function assignLayers(nodes, links) {
             node.layer = currentLevel + 1; // layer从1开始
         });
         levels.set(currentLevel, isolatedNodes);
+    }
+    
+    // 🔴 BFS分配后应用聚合连接约束
+    if (aggregatedLinks.length > 0) {
+        console.log('BFS后应用聚合连接层级约束...');
+        let adjusted = true;
+        let iterations = 0;
+        const maxIterations = 10;
+        
+        while (adjusted && iterations < maxIterations) {
+            adjusted = false;
+            iterations++;
+            
+            aggregatedLinks.forEach(group => {
+                const sourceNode = nodeMap.get(group.sourceId);
+                if (!sourceNode) return;
+                
+                const sourceLayer = sourceNode.layer || 1;
+                
+                group.links.forEach(link => {
+                    const targetId = link.target;
+                    const targetNode = nodeMap.get(targetId);
+                    if (!targetNode) return;
+                    
+                    if (targetNode.layer <= sourceLayer) {
+                        const oldLayer = targetNode.layer;
+                        targetNode.layer = sourceLayer + 1;
+                        console.log(`  聚合约束(BFS): 将节点"${targetNode.label}"从layer=${oldLayer}调整到layer=${targetNode.layer}`);
+                        adjusted = true;
+                    }
+                });
+            });
+        }
+        
+        // 重建levels Map
+        levels.clear();
+        nodes.forEach(node => {
+            const level = node.layer - 1;
+            if (!levels.has(level)) {
+                levels.set(level, []);
+            }
+            levels.get(level).push(node);
+        });
     }
     
     // 🔴 验证：确保所有节点都被分配到层级

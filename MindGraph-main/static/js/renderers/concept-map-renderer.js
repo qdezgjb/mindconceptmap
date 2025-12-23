@@ -828,8 +828,9 @@ function detectAggregatedLinks(links) {
  * @param {Array} allNodes - 所有节点数组
  * @param {number} offsetIndex - 同一源节点的聚合组索引（用于偏移计算）
  * @param {number} totalGroups - 同一源节点的聚合组总数
+ * @param {Set} mixedSourceIds - 同时有聚合连接和普通连接的源节点ID集合
  */
-function drawAggregatedLink(svg, group, nodeById, allNodes, offsetIndex = 0, totalGroups = 1) {
+function drawAggregatedLink(svg, group, nodeById, allNodes, offsetIndex = 0, totalGroups = 1, mixedSourceIds = new Set()) {
     const sourceNode = nodeById.get(group.sourceId);
     if (!sourceNode) {
         console.warn('drawAggregatedLink: 源节点未找到', group.sourceId);
@@ -857,12 +858,8 @@ function drawAggregatedLink(svg, group, nodeById, allNodes, offsetIndex = 0, tot
     
     if (targetNodes.length === 0) return;
     
-    // 需求：同一源节点有多个聚合连接时，连线需从同一点出发
-    // 因此关闭横向偏移，所有聚合线共用源节点中心
-    const horizontalOffset = 0;
-    
-    // 计算源节点底部中心点（加上横向偏移）
-    const sourceX = sourceNode.x + horizontalOffset;
+    // 计算源节点底部中心点（所有连接线从同一点出发，不偏移）
+    const sourceX = sourceNode.x;
     const sourceY = sourceNode.y + sourceHeight / 2;
     
     // 计算目标节点的平均连接点（目标节点顶部中心）
@@ -1164,6 +1161,18 @@ function drawLinks(svg, nodes, links, topic) {
         });
     });
     
+    // 🔴 预先检测哪些源节点同时有聚合连接和普通连接（用于聚合连接偏左）
+    const tempRegularLinks = filteredLinks.filter(link => {
+        if (aggregatedLinkIds.has(link.id)) return false;
+        const s = getLinkNodeId(link.source);
+        const t = getLinkNodeId(link.target);
+        if (aggregatedPairs.has(`${s}->${t}`)) return false;
+        return true;
+    });
+    const aggregatedSourceIds = new Set(aggregatedLinks.map(g => g.sourceId));
+    const regularSourceIds = new Set(tempRegularLinks.map(link => getLinkNodeId(link.source)));
+    const mixedSourceIds = new Set([...aggregatedSourceIds].filter(id => regularSourceIds.has(id)));
+    
     // 先绘制聚合连接（处理同一源节点有多个聚合组的情况，添加偏移避免重叠）
     // 按源节点分组，计算每个源节点有多少个聚合组
     const sourceGroupCount = new Map();
@@ -1178,8 +1187,8 @@ function drawLinks(svg, nodes, links, topic) {
         const currentIndex = sourceGroupIndex.get(group.sourceId) || 0;
         const totalGroups = sourceGroupCount.get(group.sourceId) || 1;
         
-        // 绘制聚合连接，传入索引和总数用于偏移计算
-        drawAggregatedLink(svg, group, nodeById, nodes, currentIndex, totalGroups);
+        // 绘制聚合连接，传入索引、总数和混合连接信息
+        drawAggregatedLink(svg, group, nodeById, nodes, currentIndex, totalGroups, mixedSourceIds);
         
         // 更新索引
         sourceGroupIndex.set(group.sourceId, currentIndex + 1);
@@ -1195,6 +1204,7 @@ function drawLinks(svg, nodes, links, topic) {
         return true;
     });
     console.log(`drawLinks: 普通连线 ${regularLinks.length} 条，聚合连接组 ${aggregatedLinks.length} 组`);
+    console.log(`drawLinks: 检测到 ${mixedSourceIds.size} 个源节点同时有聚合连接和普通连接:`, [...mixedSourceIds]);
     
     // 渲染普通连线
     regularLinks.forEach((link, idx) => {
@@ -1237,7 +1247,7 @@ function drawLinks(svg, nodes, links, topic) {
             startY = source.y + sourceHeight / 2;
             endX = target.x;
             endY = target.y - targetHeight / 2;
-                } else {
+        } else {
             // 目标在上方
             startX = source.x;
             startY = source.y - sourceHeight / 2;
@@ -1363,7 +1373,7 @@ function drawLinks(svg, nodes, links, topic) {
         line.setAttribute('stroke-linecap', 'round');
         line.setAttribute('stroke-linejoin', 'round');
         
-        // 设置断开模式（只有当连线足够长时才断开）
+        // 设置断开模式（只有当连线足够长时才断开，用于显示标签）
         if (pathData.isCurved && pathData.controlPoint) {
             // 曲线：使用曲线长度计算断开
             const arcLen = arcLength !== undefined ? arcLength : estimateQuadraticBezierLength(startX, startY, pathData.controlPoint.x, pathData.controlPoint.y, endX, endY);
@@ -2229,7 +2239,7 @@ function updateLinkPosition(linkGroup, link) {
     
     line.setAttribute('d', pathData.path);
     
-    // 更新断开样式（只有连线足够长时才断开）
+    // 更新断开样式（只有连线足够长时才断开，用于显示标签）
     const labelTextContent = link.label || '双击编辑';
     const textWidth = Math.max(40, labelTextContent.length * 10);
     const textGap = Math.max(20, textWidth * 0.6);
@@ -3077,7 +3087,7 @@ function drawSingleLink(link) {
     path.setAttribute('stroke-width', '2');
     path.setAttribute('fill', 'none');
     
-    // 设置断开模式（只有当连线足够长时才断开）
+    // 设置断开模式（只有当连线足够长时才断开，用于显示标签）
     if (pathData.isCurved && pathData.controlPoint) {
         const arcLength = estimateQuadraticBezierLength(startX, startY, pathData.controlPoint.x, pathData.controlPoint.y, endX, endY);
         if (arcLength > textGap * 2) {
