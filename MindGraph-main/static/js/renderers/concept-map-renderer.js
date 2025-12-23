@@ -2227,7 +2227,14 @@ function updateLinkPosition(linkGroup, link) {
     
     // 更新路径
     let pathData;
-    if (isSameLayer) {
+    // 手动创建的连线始终使用直线
+    if (link.isManuallyCreated) {
+        pathData = {
+            isCurved: false,
+            path: `M ${startX} ${startY} L ${endX} ${endY}`,
+            waypoints: [{ x: startX, y: startY }, { x: endX, y: endY }]
+        };
+    } else if (isSameLayer) {
         pathData = calculateCurvedPath(startX, startY, endX, endY);
     } else {
         pathData = {
@@ -2931,12 +2938,13 @@ function createConceptLink(sourceId, targetId) {
         return;
     }
     
-    // 创建新连线
+    // 创建新连线（标记为手动创建，始终使用直线）
     const newLink = {
         id: `link-${sourceId}-${targetId}`,
         source: sourceId,
         target: targetId,
-        label: ''
+        label: '',
+        isManuallyCreated: true  // 手动创建的连线始终使用直线
     };
     
     // 添加到数据中
@@ -3007,22 +3015,13 @@ function drawSingleLink(link) {
     const lineGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     lineGroup.setAttribute('data-link-id', link.id);
     
-    // 使用折线路径计算（检测重叠并避开）
-    let pathData = calculatePolylinePath(link, currentGraphData?.nodes || [], currentGraphData?.links || []);
-    
-    // 如果 calculatePolylinePath 返回 null，使用默认路径
-    if (!pathData) {
-        if (isSameLayer) {
-            pathData = calculateCurvedPath(startX, startY, endX, endY);
-        } else {
-            pathData = {
-                isCurved: false,
-                isPolyline: false,
-                path: `M ${startX} ${startY} L ${endX} ${endY}`,
-                waypoints: [{ x: startX, y: startY }, { x: endX, y: endY }]
-            };
-        }
-    }
+    // 手动创建的连线始终使用直线
+    let pathData = {
+        isCurved: false,
+        isPolyline: false,
+        path: `M ${startX} ${startY} L ${endX} ${endY}`,
+        waypoints: [{ x: startX, y: startY }, { x: endX, y: endY }]
+    };
     
     // 计算标签位置（严格位于连线断开的中点）
     let midX, midY;
