@@ -263,6 +263,14 @@ class LanguageManager {
                 fillColorLabel: 'Fill',
                 strokeColorLabel: 'Stroke',
                 opacity: 'Opacity',
+                // Link Properties
+                linkProperties: 'Link Properties',
+                linkTextColor: 'Text Color',
+                linkLineColor: 'Line Color',
+                linkLineWidth: 'Line Width',
+                linkTextColorLabel: 'Text',
+                linkLineColorLabel: 'Line',
+                linkLabelPlaceholder: 'Enter connection word',
                 applyAllChanges: 'Apply All Changes',
                 // MindMate AI Panel (uses configurable name from backend)
                 mindMateAI: window.AI_ASSISTANT_NAME || 'MindMate AI',
@@ -583,6 +591,14 @@ class LanguageManager {
                 fillColorLabel: '填充',
                 strokeColorLabel: '边框',
                 opacity: '透明度',
+                // Link Properties
+                linkProperties: '连接线属性',
+                linkTextColor: '文字颜色',
+                linkLineColor: '连接线颜色',
+                linkLineWidth: '连接线宽度',
+                linkTextColorLabel: '文字',
+                linkLineColorLabel: '连接线',
+                linkLabelPlaceholder: '输入连接词',
                 applyAllChanges: '应用所有更改',
                 // MindMate AI Panel (uses configurable name from backend)
                 mindMateAI: window.AI_ASSISTANT_NAME || 'MindMate AI',

@@ -43,8 +43,26 @@ class PropertyPanelManager {
         this.previewFillColor = null;
         this.previewStrokeColor = null;
         
+        // Link mode elements
+        this.linkColorGroup = null;
+        this.nodeColorGroup = null;
+        this.linkLineWidthGroup = null;
+        this.nodeStrokeWidthGroup = null;
+        this.propLinkTextColor = null;
+        this.propLinkLineColor = null;
+        this.propLinkLineWidth = null;
+        this.previewLinkTextColor = null;
+        this.previewLinkLineColor = null;
+        
         // Current selection
         this.currentNodeId = null;
+        this.currentLinkId = null;
+        this.isLinkMode = false;  // true when link is selected, false when node is selected
+        
+        // Multi-select mode
+        this.isMultiSelectMode = false;
+        this.selectedNodeIds = [];  // 多选节点ID列表
+        this.selectedLinkIds = [];  // 多选连线ID列表
         
         // Initialize
         this.initializeElements();
@@ -76,6 +94,20 @@ class PropertyPanelManager {
         this.previewTextColor = document.getElementById('preview-text-color');
         this.previewFillColor = document.getElementById('preview-fill-color');
         this.previewStrokeColor = document.getElementById('preview-stroke-color');
+        
+        // Link mode elements
+        this.linkColorGroup = document.getElementById('link-color-group');
+        this.nodeColorGroup = document.getElementById('node-color-group');
+        this.linkLineWidthGroup = document.getElementById('link-line-width-group');
+        this.nodeStrokeWidthGroup = document.getElementById('node-stroke-width-group');
+        this.propLinkTextColor = document.getElementById('prop-link-text-color');
+        this.propLinkLineColor = document.getElementById('prop-link-line-color');
+        this.propLinkLineWidth = document.getElementById('prop-link-line-width');
+        this.previewLinkTextColor = document.getElementById('preview-link-text-color');
+        this.previewLinkLineColor = document.getElementById('preview-link-line-color');
+        this.linkLineWidthValue = document.getElementById('link-line-width-value');
+        this.strokeWidthValue = document.getElementById('stroke-width-value');
+        this.opacityValue = document.getElementById('opacity-value');
         
         if (!this.panel) {
             this.logger.warn('PropertyPanelManager', 'Property panel element not found');
@@ -162,6 +194,7 @@ class PropertyPanelManager {
         // Listen for node selection
         this.eventBus.onWithOwner('selection:changed', (data) => {
             if (data.selectedNodes.length === 1) {
+                this.switchToNodeMode();
                 this.loadNodeProperties(data.selectedNodes[0]);
                 // Auto-open panel if requested (not in assistant mode)
                 if (data.shouldAutoOpenPanel) {
@@ -170,6 +203,14 @@ class PropertyPanelManager {
             } else {
                 this.clearPanel();
             }
+        }, this.ownerId);
+        
+        // Listen for link selection (concept map links)
+        this.eventBus.onWithOwner('link:selected', (data) => {
+            this.logger.debug('PropertyPanelManager', 'Link selected event received', data);
+            this.switchToLinkMode();
+            this.loadLinkProperties(data.linkId, data.linkData);
+            this.openPanel(null, true);  // true = isLinkMode
         }, this.ownerId);
         
         // Listen for selection cleared
@@ -200,17 +241,32 @@ class PropertyPanelManager {
             this.updateNodeProperties(data.nodeId, data.properties);
         }, this.ownerId);
         
+        // Listen for multi-node selection (Ctrl+A)
+        this.eventBus.onWithOwner('nodes:multi_selected', (data) => {
+            this.logger.debug('PropertyPanelManager', 'Multi-node selection event received', data);
+            this.switchToMultiNodeMode(data.nodeIds);
+            this.openPanel(null, false);
+        }, this.ownerId);
+        
+        // Listen for multi-link selection (Ctrl+L)
+        this.eventBus.onWithOwner('links:multi_selected', (data) => {
+            this.logger.debug('PropertyPanelManager', 'Multi-link selection event received', data);
+            this.switchToMultiLinkMode(data.linkIds);
+            this.openPanel(null, true);
+        }, this.ownerId);
+        
         this.logger.debug('PropertyPanelManager', 'Subscribed to events with owner tracking');
     }
     
     /**
      * Open property panel
-     * @param {string} nodeId - Node ID
+     * @param {string} nodeId - Node ID (optional, for node mode)
+     * @param {boolean} isLinkMode - Whether opening for link selection (optional)
      */
-    openPanel(nodeId = null) {
+    openPanel(nodeId = null, isLinkMode = false) {
         if (!this.panel) return;
         
-        this.logger.debug('PropertyPanelManager', 'Opening property panel', { nodeId });
+        this.logger.debug('PropertyPanelManager', 'Opening property panel', { nodeId, isLinkMode });
         
         // Mobile: Lock body scroll to prevent page shift
         if (window.innerWidth <= 768) {
@@ -228,13 +284,13 @@ class PropertyPanelManager {
             this.panel.style.display = 'block';
         }
         
-        // Load node properties if nodeId provided
-        if (nodeId) {
+        // Load node properties if nodeId provided (and not in link mode)
+        if (nodeId && !isLinkMode) {
             this.loadNodeProperties(nodeId);
         }
         
         // Emit opened event
-        this.eventBus.emit('property_panel:opened', { nodeId });
+        this.eventBus.emit('property_panel:opened', { nodeId, isLinkMode });
     }
     
     /**
@@ -473,12 +529,331 @@ class PropertyPanelManager {
         if (this.propUnderline) this.propUnderline.classList.remove('active');
         if (this.propStrikethrough) this.propStrikethrough.classList.remove('active');
         
+        // Reset link mode values
+        if (this.propLinkTextColor) this.propLinkTextColor.value = '#333333';
+        if (this.propLinkLineColor) this.propLinkLineColor.value = '#aaaaaa';
+        if (this.propLinkLineWidth) this.propLinkLineWidth.value = 2;
+        
         // Update color button previews
         this.updateColorPreviews();
         
         this.currentNodeId = null;
+        this.currentLinkId = null;
+        this.isMultiSelectMode = false;
+        this.selectedNodeIds = [];
+        this.selectedLinkIds = [];
+        
+        // Re-enable text input
+        if (this.propText) {
+            this.propText.disabled = false;
+            this.propText.placeholder = '';
+        }
         
         this.logger.debug('PropertyPanelManager', 'Property panel cleared');
+    }
+    
+    /**
+     * Switch to node mode - show node-specific controls
+     */
+    switchToNodeMode() {
+        this.isLinkMode = false;
+        this.isMultiSelectMode = false;
+        this.selectedNodeIds = [];
+        this.selectedLinkIds = [];
+        this.currentLinkId = null;
+        
+        // Show node controls, hide link controls
+        if (this.nodeColorGroup) this.nodeColorGroup.style.display = '';
+        if (this.linkColorGroup) this.linkColorGroup.style.display = 'none';
+        if (this.nodeStrokeWidthGroup) this.nodeStrokeWidthGroup.style.display = '';
+        if (this.linkLineWidthGroup) this.linkLineWidthGroup.style.display = 'none';
+        
+        // Re-enable text input
+        if (this.propText) {
+            this.propText.disabled = false;
+        }
+        
+        // Update header text
+        const header = this.panel?.querySelector('.property-header h3');
+        if (header) {
+            header.textContent = window.languageManager?.translate('properties') || '属性';
+        }
+        
+        this.logger.debug('PropertyPanelManager', 'Switched to node mode');
+    }
+    
+    /**
+     * Switch to link mode - show link-specific controls
+     */
+    switchToLinkMode() {
+        this.isLinkMode = true;
+        this.isMultiSelectMode = false;
+        this.selectedNodeIds = [];
+        this.selectedLinkIds = [];
+        this.currentNodeId = null;
+        
+        // Show link controls, hide node controls
+        if (this.nodeColorGroup) this.nodeColorGroup.style.display = 'none';
+        if (this.linkColorGroup) this.linkColorGroup.style.display = '';
+        if (this.nodeStrokeWidthGroup) this.nodeStrokeWidthGroup.style.display = 'none';
+        if (this.linkLineWidthGroup) this.linkLineWidthGroup.style.display = '';
+        
+        // Re-enable text input
+        if (this.propText) {
+            this.propText.disabled = false;
+        }
+        
+        // Update header text
+        const header = this.panel?.querySelector('.property-header h3');
+        if (header) {
+            header.textContent = window.languageManager?.translate('linkProperties') || '连接线属性';
+        }
+        
+        this.logger.debug('PropertyPanelManager', 'Switched to link mode');
+    }
+    
+    /**
+     * Switch to multi-node mode - for batch editing multiple nodes
+     */
+    switchToMultiNodeMode(nodeIds) {
+        this.isLinkMode = false;
+        this.isMultiSelectMode = true;
+        this.selectedNodeIds = nodeIds || [];
+        this.selectedLinkIds = [];
+        this.currentNodeId = null;
+        this.currentLinkId = null;
+        
+        // Show node controls, hide link controls
+        if (this.nodeColorGroup) this.nodeColorGroup.style.display = '';
+        if (this.linkColorGroup) this.linkColorGroup.style.display = 'none';
+        if (this.nodeStrokeWidthGroup) this.nodeStrokeWidthGroup.style.display = '';
+        if (this.linkLineWidthGroup) this.linkLineWidthGroup.style.display = 'none';
+        
+        // Disable text input in multi-select mode
+        if (this.propText) {
+            this.propText.disabled = true;
+            this.propText.value = '';
+            this.propText.placeholder = `已选择 ${nodeIds.length} 个节点（批量模式不支持修改文字）`;
+        }
+        
+        // Update header text
+        const header = this.panel?.querySelector('.property-header h3');
+        if (header) {
+            header.textContent = `批量编辑 (${nodeIds.length} 个节点)`;
+        }
+        
+        this.logger.debug('PropertyPanelManager', 'Switched to multi-node mode', { count: nodeIds.length });
+    }
+    
+    /**
+     * Switch to multi-link mode - for batch editing multiple links
+     */
+    switchToMultiLinkMode(linkIds) {
+        this.isLinkMode = true;
+        this.isMultiSelectMode = true;
+        this.selectedLinkIds = linkIds || [];
+        this.selectedNodeIds = [];
+        this.currentNodeId = null;
+        this.currentLinkId = null;
+        
+        // Show link controls, hide node controls
+        if (this.nodeColorGroup) this.nodeColorGroup.style.display = 'none';
+        if (this.linkColorGroup) this.linkColorGroup.style.display = '';
+        if (this.nodeStrokeWidthGroup) this.nodeStrokeWidthGroup.style.display = 'none';
+        if (this.linkLineWidthGroup) this.linkLineWidthGroup.style.display = '';
+        
+        // Disable text input in multi-select mode
+        if (this.propText) {
+            this.propText.disabled = true;
+            this.propText.value = '';
+            this.propText.placeholder = `已选择 ${linkIds.length} 条连线（批量模式不支持修改连接词）`;
+        }
+        
+        // Update header text
+        const header = this.panel?.querySelector('.property-header h3');
+        if (header) {
+            header.textContent = `批量编辑 (${linkIds.length} 条连线)`;
+        }
+        
+        this.logger.debug('PropertyPanelManager', 'Switched to multi-link mode', { count: linkIds.length });
+    }
+    
+    /**
+     * Load properties from selected link
+     * @param {string} linkId - Link ID
+     * @param {Object} linkData - Link data with properties
+     */
+    loadLinkProperties(linkId, linkData) {
+        if (!linkId || !linkData) {
+            this.logger.warn('PropertyPanelManager', 'Invalid link data', { linkId, linkData });
+            return;
+        }
+        
+        this.currentLinkId = linkId;
+        
+        this.logger.debug('PropertyPanelManager', 'Loading link properties', { linkId, linkData });
+        
+        // Load text (connection word)
+        if (this.propText) {
+            this.propText.value = linkData.label || '';
+            this.propText.placeholder = window.languageManager?.translate('linkLabelPlaceholder') || '输入连接词';
+            // Auto-resize textarea
+            if (this.propText.tagName === 'TEXTAREA') {
+                this.autoResizeTextarea(this.propText);
+            }
+        }
+        
+        // Load font size
+        if (this.propFontSize) {
+            this.propFontSize.value = parseInt(linkData.fontSize) || 24;
+        }
+        
+        // Load font family
+        if (this.propFontFamily) {
+            this.propFontFamily.value = linkData.fontFamily || "Inter, sans-serif";
+        }
+        
+        // Load link text color
+        if (this.propLinkTextColor) {
+            this.propLinkTextColor.value = this.expandHexColor(linkData.textColor || '#333333');
+        }
+        
+        // Load link line color
+        if (this.propLinkLineColor) {
+            this.propLinkLineColor.value = this.expandHexColor(linkData.lineColor || '#aaaaaa');
+        }
+        
+        // Load link line width
+        if (this.propLinkLineWidth) {
+            this.propLinkLineWidth.value = parseFloat(linkData.lineWidth) || 2;
+        }
+        if (this.linkLineWidthValue) {
+            this.linkLineWidthValue.textContent = `${linkData.lineWidth || 2}px`;
+        }
+        
+        // Load opacity
+        if (this.propOpacity) {
+            this.propOpacity.value = parseFloat(linkData.opacity) || 1;
+        }
+        if (this.opacityValue) {
+            this.opacityValue.textContent = `${Math.round((parseFloat(linkData.opacity) || 1) * 100)}%`;
+        }
+        
+        // Load font style toggles
+        if (this.propBold) {
+            this.propBold.classList.toggle('active', linkData.fontWeight === 'bold' || linkData.fontWeight === '700');
+        }
+        if (this.propItalic) {
+            this.propItalic.classList.toggle('active', linkData.fontStyle === 'italic');
+        }
+        if (this.propUnderline) {
+            const textDecoration = linkData.textDecoration || 'none';
+            this.propUnderline.classList.toggle('active', textDecoration.includes('underline'));
+        }
+        if (this.propStrikethrough) {
+            const textDecoration = linkData.textDecoration || 'none';
+            this.propStrikethrough.classList.toggle('active', textDecoration.includes('line-through'));
+        }
+        
+        // Update color previews
+        this.updateLinkColorPreviews();
+        
+        this.logger.debug('PropertyPanelManager', 'Link properties loaded', { linkId });
+    }
+    
+    /**
+     * Update link color preview bars
+     */
+    updateLinkColorPreviews() {
+        if (this.previewLinkTextColor && this.propLinkTextColor) {
+            this.previewLinkTextColor.style.backgroundColor = this.propLinkTextColor.value;
+        }
+        if (this.previewLinkLineColor && this.propLinkLineColor) {
+            this.previewLinkLineColor.style.backgroundColor = this.propLinkLineColor.value;
+        }
+    }
+    
+    /**
+     * Apply current properties to selected link
+     */
+    applyLinkProperties() {
+        if (!this.currentLinkId || !this.isLinkMode) return;
+        
+        const styles = {};
+        
+        // Text/label
+        if (this.propText) {
+            styles.label = this.propText.value;
+        }
+        
+        // Text color
+        if (this.propLinkTextColor) {
+            styles.textColor = this.propLinkTextColor.value;
+        }
+        
+        // Line color
+        if (this.propLinkLineColor) {
+            styles.lineColor = this.propLinkLineColor.value;
+        }
+        
+        // Line width
+        if (this.propLinkLineWidth) {
+            styles.lineWidth = this.propLinkLineWidth.value;
+        }
+        
+        // Opacity
+        if (this.propOpacity) {
+            styles.opacity = this.propOpacity.value;
+        }
+        
+        // Font size
+        if (this.propFontSize) {
+            styles.fontSize = this.propFontSize.value;
+        }
+        
+        // Font family
+        if (this.propFontFamily) {
+            styles.fontFamily = this.propFontFamily.value;
+        }
+        
+        // Font weight (bold)
+        if (this.propBold) {
+            styles.fontWeight = this.propBold.classList.contains('active') ? 'bold' : 'normal';
+        }
+        
+        // Font style (italic)
+        if (this.propItalic) {
+            styles.fontStyle = this.propItalic.classList.contains('active') ? 'italic' : 'normal';
+        }
+        
+        // Text decoration (underline, strikethrough)
+        const decorations = [];
+        if (this.propUnderline?.classList.contains('active')) decorations.push('underline');
+        if (this.propStrikethrough?.classList.contains('active')) decorations.push('line-through');
+        styles.textDecoration = decorations.length > 0 ? decorations.join(' ') : 'none';
+        
+        // Call the global updateLinkStyle function
+        if (typeof window.updateLinkStyle === 'function') {
+            window.updateLinkStyle(this.currentLinkId, styles);
+        }
+        
+        this.logger.debug('PropertyPanelManager', 'Applied link properties', { linkId: this.currentLinkId, styles });
+    }
+    
+    /**
+     * Get current selection mode
+     * @returns {string} 'node' or 'link'
+     */
+    getSelectionMode() {
+        return this.isLinkMode ? 'link' : 'node';
+    }
+    
+    /**
+     * Get current link ID (if in link mode)
+     * @returns {string|null}
+     */
+    getCurrentLinkId() {
+        return this.currentLinkId;
     }
     
     /**

@@ -490,6 +490,7 @@
     /* Button SVGs smaller on mobile */
     .btn-tool svg,
     .btn-auto svg,
+    .btn-interaction svg,
     .btn-line svg,
     .btn-learning svg,
     .btn-thinking svg {
@@ -553,6 +554,7 @@
     
     /* Auto Complete and special buttons */
     .btn-auto,
+    .btn-interaction,
     .btn-line,
     .btn-learning,
     .btn-thinking {
@@ -651,6 +653,38 @@
 }
 
 .btn-auto.loading svg {
+    animation: rotate 1s linear infinite;
+}
+
+/* Interaction Button */
+.btn-interaction {
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%) !important;
+    color: white !important;
+    font-weight: 600 !important;
+    /* Note: display is controlled by JavaScript in view-manager.js */
+    align-items: center !important;
+    padding: 8px 14px !important;
+    border: none !important;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3) !important;
+}
+
+.btn-interaction:hover {
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%) !important;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4) !important;
+}
+
+.btn-interaction:active {
+    transform: translateY(0);
+}
+
+.btn-interaction.loading {
+    opacity: 0.7;
+    cursor: wait;
+    pointer-events: none;
+}
+
+.btn-interaction.loading svg {
     animation: rotate 1s linear infinite;
 }
 

@@ -13,11 +13,11 @@
 /**
  * 计算文字尺寸
  */
-function calculateTextDimensions(text, fontSize = '14', fontFamily = 'Arial, sans-serif') {
+function calculateTextDimensions(text, fontSize = '24', fontFamily = 'Arial, sans-serif') {
     if (!text) return { width: 0, height: 0 };
     
     // 简单估算：中文字符约 fontSize 宽度，英文字符约 fontSize * 0.6 宽度
-    const size = parseInt(fontSize) || 14;
+    const size = parseInt(fontSize) || 24;
     let width = 0;
     for (const char of text) {
         if (/[\u4e00-\u9fa5]/.test(char)) {
@@ -33,16 +33,87 @@ function calculateTextDimensions(text, fontSize = '14', fontFamily = 'Arial, san
 /**
  * 计算节点尺寸
  */
-function calculateNodeDimensions(nodeLabel, minWidth = 90, minHeight = 45, padding = 20) {
+function calculateNodeDimensions(nodeLabel, minWidth = 220, minHeight = 85, padding = 36) {
     if (!nodeLabel || nodeLabel.trim() === '') {
         return { width: minWidth, height: minHeight };
     }
     
-    const textDimensions = calculateTextDimensions(nodeLabel, '14', 'Arial, sans-serif');
+    // 使用24号字体计算文字尺寸（与节点字体大小保持一致）
+    const textDimensions = calculateTextDimensions(nodeLabel, '24', 'Arial, sans-serif');
     const nodeWidth = Math.max(minWidth, textDimensions.width + padding * 2);
     const nodeHeight = Math.max(minHeight, textDimensions.height + padding);
     
     return { width: nodeWidth, height: nodeHeight };
+}
+
+/**
+ * 计算两个节点之间最近的上下边中点连接点
+ * 选择距离最短的连接方式：源上/下边中点 → 目标上/下边中点
+ * @param {Object} source - 源节点 {x, y, width, height, layer}
+ * @param {Object} target - 目标节点 {x, y, width, height, layer}
+ * @param {boolean} isSameLayer - 是否是同级连接（可选，如果不传则自动判断）
+ * @returns {Object} { startX, startY, endX, endY }
+ */
+function calculateNearestEdgeConnection(source, target, isSameLayer) {
+    const sourceTop = { x: source.x, y: source.y - source.height / 2 };
+    const sourceBottom = { x: source.x, y: source.y + source.height / 2 };
+    const targetTop = { x: target.x, y: target.y - target.height / 2 };
+    const targetBottom = { x: target.x, y: target.y + target.height / 2 };
+    
+    // 如果没有传入 isSameLayer，自动判断
+    if (isSameLayer === undefined) {
+        isSameLayer = source.layer !== undefined && target.layer !== undefined && source.layer === target.layer;
+    }
+    
+    // 计算两个节点中心点的 Y 坐标差异
+    const yDifference = Math.abs(source.y - target.y);
+    // 使用较大节点的高度作为阈值
+    const heightThreshold = Math.max(source.height, target.height);
+    
+    // 同级连接：只有当 layer 相同 且 Y 坐标差异小于一个节点高度时，才使用下方中点到下方中点
+    // 这样手动放置的节点即使 layer 相同，如果位置差异大也会使用最近边连接
+    if (isSameLayer && yDifference < heightThreshold) {
+        return {
+            startX: sourceBottom.x,
+            startY: sourceBottom.y,
+            endX: targetBottom.x,
+            endY: targetBottom.y
+        };
+    }
+    
+    // 非同级连接或Y坐标差异大：计算所有4种连接组合的距离，选择最近的
+    const connections = [
+        { 
+            start: sourceTop, 
+            end: targetTop, 
+            dist: Math.hypot(sourceTop.x - targetTop.x, sourceTop.y - targetTop.y) 
+        },
+        { 
+            start: sourceTop, 
+            end: targetBottom, 
+            dist: Math.hypot(sourceTop.x - targetBottom.x, sourceTop.y - targetBottom.y) 
+        },
+        { 
+            start: sourceBottom, 
+            end: targetTop, 
+            dist: Math.hypot(sourceBottom.x - targetTop.x, sourceBottom.y - targetTop.y) 
+        },
+        { 
+            start: sourceBottom, 
+            end: targetBottom, 
+            dist: Math.hypot(sourceBottom.x - targetBottom.x, sourceBottom.y - targetBottom.y) 
+        }
+    ];
+    
+    // 选择距离最短的连接
+    const nearest = connections.reduce((min, curr) => curr.dist < min.dist ? curr : min);
+    
+    return {
+        startX: nearest.start.x,
+        startY: nearest.start.y,
+        endX: nearest.end.x,
+        endY: nearest.end.y
+    };
 }
 
 /**
@@ -116,23 +187,23 @@ function renderConceptMap(spec, theme = null, dimensions = null) {
             }
     container.innerHTML = '';
     
-    // 获取尺寸 (高度使用合理值，与 concept-map-new-master 一致)
-    let width = 1600;
-    let height = 800; // 使用合理的固定高度，实际高度由 adjustViewBox 动态调整
+    // 获取容器的实际尺寸，用于设置 viewBox
+    // 注意：使用 clientWidth/clientHeight 避免小数造成亚像素偏移
+    const containerRect = container.getBoundingClientRect();
+    const width = Math.round(container.clientWidth || containerRect.width || 1600);
+    const height = Math.round(container.clientHeight || containerRect.height || 800);
+    // 如果浏览器可视宽度大于容器宽度，则只向左平移 viewBox，不拉伸宽度，避免缩放内容
+    const viewportWidth = Math.round(document.documentElement.clientWidth || window.innerWidth || width);
+    const viewBoxX = (viewportWidth > width) ? -(viewportWidth - width) : 0;
     
-    if (spec._recommended_dimensions) {
-        width = spec._recommended_dimensions.width || width;
-        // 不使用推荐的高度，使用固定值
-    } else if (dimensions) {
-        width = dimensions.width || dimensions.baseWidth || width;
-        // 不使用推荐的高度，使用固定值
-    }
+    console.log(`ConceptMapRenderer: 容器尺寸 ${containerRect.width.toFixed(0)}x${containerRect.height.toFixed(0)}, viewBox 尺寸 ${width.toFixed(0)}x${height.toFixed(0)}`);
     
     // 创建 SVG
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('width', width);
     svg.setAttribute('height', height);
-    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+    // 保持 viewBox 宽度为容器宽度，仅平移 minX，避免缩放变小
+    svg.setAttribute('viewBox', `${viewBoxX} 0 ${width} ${height}`);
     svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     svg.setAttribute('class', 'concept-graph');
     container.appendChild(svg);
@@ -194,13 +265,30 @@ function renderConceptMap(spec, theme = null, dimensions = null) {
     console.log('ConceptMapRenderer: 节点数:', graphData.nodes.length, '连线数:', graphData.links.length);
     
     // ========================================================================
-    // 应用 Sugiyama 布局
+    // 应用 Sugiyama 布局（仅当有概念节点时）
     // ========================================================================
     let layoutResult = graphData;
-    if (typeof window.applySugiyamaLayout === 'function') {
+    
+    // 检查是否只有焦点问题节点
+    const conceptNodes = graphData.nodes.filter(n => n.layer !== 0 && !n.isFocusQuestion);
+    const hasOnlyFocusQuestion = conceptNodes.length === 0;
+    
+    if (hasOnlyFocusQuestion) {
+        // 只有焦点问题框，直接设置位置，不需要运行布局算法
+        console.log('ConceptMapRenderer: 只有焦点问题节点，跳过Sugiyama布局，直接定位');
+        graphData.nodes.forEach(node => {
+            if (node.layer === 0 || node.isFocusQuestion) {
+                node.x = width / 2;
+                node.y = 50; // 与 sugiyama-layout.js 保持一致
+                if (!node.width) node.width = 1400;
+                if (!node.height) node.height = 80;
+            }
+        });
+        layoutResult = graphData;
+    } else if (typeof window.applySugiyamaLayout === 'function') {
         console.log('ConceptMapRenderer: 应用 Sugiyama 布局算法');
         layoutResult = window.applySugiyamaLayout(graphData);
-        } else {
+    } else {
         console.warn('ConceptMapRenderer: Sugiyama 布局不可用，使用默认布局');
         applyDefaultLayout(graphData.nodes, graphData.links, width, height);
         layoutResult = graphData;
@@ -235,6 +323,21 @@ function renderConceptMap(spec, theme = null, dimensions = null) {
     optimizeLabelPositions(layoutResult.nodes, layoutResult.links);
     
     // ========================================================================
+    // 预先计算并更新所有节点的尺寸（确保连线计算使用正确的尺寸）
+    // ========================================================================
+    layoutResult.nodes.forEach(node => {
+        const isFocusQuestion = node.isFocusQuestion || node.id === 'focus-question-node';
+        if (isFocusQuestion) {
+            node.width = 1400;
+            node.height = 80;
+        } else {
+            const dims = calculateNodeDimensions(node.label || '');
+            node.width = dims.width;
+            node.height = dims.height;
+        }
+    });
+    
+    // ========================================================================
     // 渲染连线（先渲染连线，再渲染节点，确保节点在连线上方）
     // ========================================================================
     drawLinks(svg, layoutResult.nodes, layoutResult.links, topic);
@@ -250,6 +353,68 @@ function renderConceptMap(spec, theme = null, dimensions = null) {
     if (typeof setCurrentGraphData === 'function') {
         setCurrentGraphData(layoutResult);
     }
+
+    // ========================================================================
+    // 调试：输出焦点问题框的居中诊断信息（使用布局数据和变换后的 BBox）
+    // ========================================================================
+    (function logFocusQuestionDiagnostics() {
+        const container = document.getElementById('d3-container');
+        const svgEl = container?.querySelector('svg');
+        const focusNode = layoutResult.nodes.find(
+            n => n.layer === 0 || n.isFocusQuestion || n.id === 'focus-question-node'
+        );
+        const viewBoxParts = svgEl?.getAttribute('viewBox')?.split(' ').map(Number) || [];
+        const viewBoxX = viewBoxParts[0] || 0;
+        const viewBoxY = viewBoxParts[1] || 0;
+        const viewBoxWidth = viewBoxParts[2] || 0;
+        const viewBoxHeight = viewBoxParts[3] || 0;
+
+        // 基于布局数据的理论左右间距
+        let leftSpace = null;
+        let rightSpace = null;
+        if (focusNode && focusNode.width) {
+            leftSpace = focusNode.x - focusNode.width / 2 - viewBoxX;
+            rightSpace = (viewBoxX + viewBoxWidth) - (focusNode.x + focusNode.width / 2);
+        }
+
+        // 基于实际渲染后的 BBox（含 transform）
+        let bboxTransformed = null;
+        const focusGroup = svgEl?.querySelector('[data-node-id="focus-question-node"]');
+        const bbox = focusGroup?.getBBox?.();
+        const ctm = focusGroup?.getCTM?.();
+        if (bbox && ctm) {
+            // 仅处理平移/缩放场景：应用 CTM 到 BBox 四个角求最小包围盒
+            const pts = [
+                { x: bbox.x, y: bbox.y },
+                { x: bbox.x + bbox.width, y: bbox.y },
+                { x: bbox.x, y: bbox.y + bbox.height },
+                { x: bbox.x + bbox.width, y: bbox.y + bbox.height }
+            ].map(p => ({
+                x: p.x * ctm.a + p.y * ctm.c + ctm.e,
+                y: p.x * ctm.b + p.y * ctm.d + ctm.f
+            }));
+            const xs = pts.map(p => p.x);
+            const ys = pts.map(p => p.y);
+            const minX = Math.min(...xs);
+            const maxX = Math.max(...xs);
+            const minY = Math.min(...ys);
+            const maxY = Math.max(...ys);
+            bboxTransformed = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+        }
+
+        const diag = {
+            containerWidth: container?.clientWidth,
+            containerHeight: container?.clientHeight,
+            viewBox: { x: viewBoxX, y: viewBoxY, width: viewBoxWidth, height: viewBoxHeight },
+            focusNode,
+            leftSpace,
+            rightSpace,
+            leftRightDiff: (leftSpace !== null && rightSpace !== null) ? (rightSpace - leftSpace) : null,
+            focusBBoxTransformed: bboxTransformed,
+            focusBBoxRaw: bbox || null
+        };
+        console.log('[ConceptMap] 居中诊断', diag);
+    })();
     
     // ========================================================================
     // 显示焦点问题（可拖动的节点）
@@ -424,7 +589,7 @@ function convertToConceptMapFormat(spec) {
         type: 'focus-question',
         isFocusQuestion: true,
         width: 1400,  // 固定宽度 1400px
-        height: 60    // 固定高度 60px
+        height: 80    // 固定高度 80px（扩大）
     });
     console.log(`  添加焦点问题节点: id=${topicId}, label=${focusQuestionLabel}, layer=0, width=1400`);
         
@@ -715,13 +880,17 @@ function drawNodes(svg, nodes, topic) {
             // 用户要求：焦点问题框长度设为固定值并且大大加长
             dims = {
                 width: 1400, // 固定宽度 1400px，足够容纳很长的文本
-                height: 60 // 高度60
+                height: 80 // 高度80（与 convertToConceptMapFormat 保持一致）
             };
         } else {
+            // 使用 calculateNodeDimensions 计算节点尺寸（确保使用最新的默认值）
             dims = calculateNodeDimensions(nodeLabel);
         }
-        const nodeWidth = node.width || dims.width;
-        const nodeHeight = node.height || dims.height;
+        // 使用计算的尺寸，并更新到节点数据中（确保连线计算使用正确的尺寸）
+        const nodeWidth = dims.width;
+        const nodeHeight = dims.height;
+        node.width = nodeWidth;
+        node.height = nodeHeight;
         const isTopic = nodeLabel === topic;
         const radius = isFocusQuestion ? 10 : 10; // 移植：统一圆角10
         
@@ -741,10 +910,16 @@ function drawNodes(svg, nodes, topic) {
             rect.setAttribute('stroke', '#667eea'); // 移植：紫蓝色边框
             rect.setAttribute('stroke-width', '2'); // 移植：边框宽度2
         } else {
-            rect.setAttribute('fill', isTopic ? '#5a4fcf' : '#667eea');
-            rect.setAttribute('fill-opacity', '0.9');
-            rect.setAttribute('stroke', '#fff');
-            rect.setAttribute('stroke-width', isTopic ? '3' : '2');
+            // 使用用户设置的样式，如果没有则使用默认值
+            const defaultFill = isTopic ? '#5a4fcf' : '#667eea';
+            const defaultStroke = '#fff';
+            const defaultStrokeWidth = isTopic ? '3' : '2';
+            const defaultOpacity = '0.9';
+            
+            rect.setAttribute('fill', node.fillColor || defaultFill);
+            rect.setAttribute('fill-opacity', node.opacity || defaultOpacity);
+            rect.setAttribute('stroke', node.strokeColor || defaultStroke);
+            rect.setAttribute('stroke-width', node.strokeWidth || defaultStrokeWidth);
         }
         rect.setAttribute('cursor', isFocusQuestion ? 'move' : 'pointer'); // 移植：拖拽光标
         g.appendChild(rect);
@@ -755,9 +930,19 @@ function drawNodes(svg, nodes, topic) {
         text.setAttribute('y', 0);
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('dominant-baseline', 'middle');
-        text.setAttribute('font-size', isFocusQuestion ? '28' : (isTopic ? '16' : '14')); // 移植：字体大小28
-        text.setAttribute('font-weight', isFocusQuestion ? '600' : (isTopic ? '600' : '500'));
-        text.setAttribute('fill', isFocusQuestion ? '#2c3e50' : 'white'); // 移植：深灰色文字
+        
+        // 使用用户设置的文字样式，如果没有则使用默认值
+        const defaultFontSize = isFocusQuestion ? '28' : '24';
+        const defaultFontWeight = isFocusQuestion ? '600' : '500';
+        const defaultTextColor = isFocusQuestion ? '#2c3e50' : 'white';
+        const defaultFontFamily = 'Inter, sans-serif';
+        
+        text.setAttribute('font-size', node.fontSize || defaultFontSize);
+        text.setAttribute('font-weight', node.fontWeight || defaultFontWeight);
+        text.setAttribute('fill', node.textColor || defaultTextColor);
+        text.setAttribute('font-family', node.fontFamily || defaultFontFamily);
+        if (node.fontStyle) text.setAttribute('font-style', node.fontStyle);
+        if (node.textDecoration) text.setAttribute('text-decoration', node.textDecoration);
         text.setAttribute('pointer-events', 'none');
         text.textContent = nodeLabel;
         g.appendChild(text);
@@ -786,37 +971,42 @@ function drawNodes(svg, nodes, topic) {
 
 /**
  * 检测聚合连接（相同源节点和相同连接词的连线）
+ * 注意：自动聚合功能已禁用，只有手动创建的聚合连接才会显示为聚合样式
  * @param {Array} links - 连线数组
  * @returns {Array} 聚合连接组数组，每个组包含 {sourceId, label, links: [...]}
  */
 function detectAggregatedLinks(links) {
+    // 禁用自动聚合功能 - 只检测已标记为聚合的连线组
+    // 普通连接线不会自动变成聚合连接
     const groups = new Map();
     
     links.forEach(link => {
-        const label = link.label || '';
-        // 只对非空且有意义的连接词进行聚合
-        if (label && label.trim().length > 0 && label !== '双击编辑') {
-            const sourceId = getLinkNodeId(link.source);
-            const key = `${sourceId}_${label}`;
-            if (!groups.has(key)) {
-                groups.set(key, {
-                    sourceId: sourceId,
-                    label: label,
-                    links: []
-                });
-            }
-            groups.get(key).links.push(link);
+        // 只有明确标记为聚合连接的才参与聚合
+        if (!link.isAggregated) return;
+        
+        const label = link.label || '双击编辑';
+        const sourceId = getLinkNodeId(link.source);
+        const key = `${sourceId}_${label}`;
+        if (!groups.has(key)) {
+            groups.set(key, {
+                sourceId: sourceId,
+                label: label,
+                links: []
+            });
         }
+        groups.get(key).links.push(link);
     });
     
     // 只返回有2个或更多连线的组（需要聚合）
     const aggregatedGroups = Array.from(groups.values()).filter(group => group.links.length >= 2);
     
-    console.log(`检测到 ${aggregatedGroups.length} 组聚合连接:`, aggregatedGroups.map(g => ({
-        sourceId: g.sourceId,
-        label: g.label,
-        count: g.links.length
-    })));
+    if (aggregatedGroups.length > 0) {
+        console.log(`检测到 ${aggregatedGroups.length} 组聚合连接:`, aggregatedGroups.map(g => ({
+            sourceId: g.sourceId,
+            label: g.label,
+            count: g.links.length
+        })));
+    }
     
     return aggregatedGroups;
 }
@@ -836,6 +1026,18 @@ function drawAggregatedLink(svg, group, nodeById, allNodes, offsetIndex = 0, tot
         console.warn('drawAggregatedLink: 源节点未找到', group.sourceId);
         return;
     }
+    
+    // 从 group 或其 links 中读取用户自定义的样式
+    const firstLink = group.links && group.links[0];
+    const userLineColor = group.lineColor || firstLink?.lineColor || '#aaa';
+    const userLineWidth = group.lineWidth || firstLink?.lineWidth || '2';
+    const userTextColor = group.textColor || firstLink?.textColor || '#333';
+    const userFontSize = group.fontSize || firstLink?.fontSize || '24';
+    const userFontFamily = group.fontFamily || firstLink?.fontFamily || 'Inter, sans-serif';
+    const userFontWeight = group.fontWeight || firstLink?.fontWeight || '500';
+    const userFontStyle = group.fontStyle || firstLink?.fontStyle || 'normal';
+    const userTextDecoration = group.textDecoration || firstLink?.textDecoration || 'none';
+    const userOpacity = group.opacity || firstLink?.opacity || '1';
     
     // 计算源节点尺寸
     const sourceDims = calculateNodeDimensions(sourceNode.label || '');
@@ -903,10 +1105,15 @@ function drawAggregatedLink(svg, group, nodeById, allNodes, offsetIndex = 0, tot
     mainLine.setAttribute('y1', sourceY);
     mainLine.setAttribute('x2', mainLineEndX);
     mainLine.setAttribute('y2', mainLineEndY);
-    mainLine.setAttribute('stroke', '#aaa');
-    mainLine.setAttribute('stroke-width', '2');
+    mainLine.setAttribute('stroke', userLineColor);
+    mainLine.setAttribute('stroke-width', userLineWidth);
     mainLine.setAttribute('fill', 'none');
     mainLine.setAttribute('stroke-linecap', 'round');
+    mainLine.setAttribute('opacity', userOpacity);
+    // 保存用户样式以便后续恢复
+    mainLine.setAttribute('data-user-color', userLineColor);
+    mainLine.setAttribute('data-user-width', userLineWidth);
+    mainLine.setAttribute('data-user-opacity', userOpacity);
     aggregateGroup.appendChild(mainLine);
     
     // 添加连接词标签
@@ -914,13 +1121,19 @@ function drawAggregatedLink(svg, group, nodeById, allNodes, offsetIndex = 0, tot
     labelText.setAttribute('x', labelX);
     labelText.setAttribute('y', labelY + 4);
     labelText.setAttribute('text-anchor', 'middle');
-    labelText.setAttribute('font-size', '12');
-    labelText.setAttribute('fill', '#333');
-    labelText.setAttribute('font-weight', '500');
+    labelText.setAttribute('font-size', userFontSize);
+    labelText.setAttribute('fill', userTextColor);
+    labelText.setAttribute('font-weight', userFontWeight);
+    labelText.setAttribute('font-family', userFontFamily);
+    labelText.setAttribute('font-style', userFontStyle);
+    labelText.setAttribute('text-decoration', userTextDecoration);
+    labelText.setAttribute('opacity', userOpacity);
     labelText.setAttribute('pointer-events', 'all');
     labelText.setAttribute('cursor', 'pointer');
     labelText.setAttribute('data-aggregate-label', 'true');
     labelText.setAttribute('data-aggregate-key', uniqueKey);
+    // 保存用户样式以便后续恢复
+    labelText.setAttribute('data-user-text-color', userTextColor);
     labelText.textContent = group.label;
     
     // 添加双击编辑事件监听器
@@ -929,7 +1142,19 @@ function drawAggregatedLink(svg, group, nodeById, allNodes, offsetIndex = 0, tot
         editAggregateLinkLabel(group);
     });
     
+    // 添加单击选中事件监听器
+    labelText.addEventListener('click', function(e) {
+        e.stopPropagation();
+        selectAggregateLink(uniqueKey, group);
+    });
+    
     aggregateGroup.appendChild(labelText);
+    
+    // 为聚合组添加单击选中事件
+    aggregateGroup.addEventListener('click', function(e) {
+        e.stopPropagation();
+        selectAggregateLink(uniqueKey, group);
+    });
     
     // 分支连接线从标签位置后开始
     const branchStartDistance = labelToSourceDistance + textGap / 2;
@@ -954,11 +1179,16 @@ function drawAggregatedLink(svg, group, nodeById, allNodes, offsetIndex = 0, tot
         branchLine.setAttribute('y1', branchStartY);
         branchLine.setAttribute('x2', targetX);
         branchLine.setAttribute('y2', targetY);
-        branchLine.setAttribute('stroke', '#aaa');
-        branchLine.setAttribute('stroke-width', '2');
+        branchLine.setAttribute('stroke', userLineColor);
+        branchLine.setAttribute('stroke-width', userLineWidth);
         branchLine.setAttribute('fill', 'none');
         branchLine.setAttribute('stroke-linecap', 'round');
+        branchLine.setAttribute('opacity', userOpacity);
         branchLine.setAttribute('data-link-id', link.id);
+        // 保存用户样式以便后续恢复
+        branchLine.setAttribute('data-user-color', userLineColor);
+        branchLine.setAttribute('data-user-width', userLineWidth);
+        branchLine.setAttribute('data-user-opacity', userOpacity);
         branchLine.style.cursor = 'pointer';
         aggregateGroup.appendChild(branchLine);
         
@@ -979,15 +1209,37 @@ function drawAggregatedLink(svg, group, nodeById, allNodes, offsetIndex = 0, tot
         
         const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         arrow.setAttribute('d', `M ${arrowX} ${arrowY} L ${arrowPoint1X} ${arrowPoint1Y} L ${arrowPoint2X} ${arrowPoint2Y} Z`);
-        arrow.setAttribute('fill', '#aaa');
-        arrow.setAttribute('stroke', '#aaa');
+        arrow.setAttribute('fill', userLineColor);
+        arrow.setAttribute('stroke', userLineColor);
         arrow.setAttribute('stroke-width', '1');
+        arrow.setAttribute('opacity', userOpacity);
         arrow.setAttribute('data-link-id', link.id);
+        // 保存用户样式以便后续恢复
+        arrow.setAttribute('data-user-color', userLineColor);
+        arrow.setAttribute('data-user-opacity', userOpacity);
         arrow.style.cursor = 'pointer';
         aggregateGroup.appendChild(arrow);
     });
     
-    svg.appendChild(aggregateGroup);
+    // 确定正确的容器添加聚合连接
+    // 传入的 svg 参数可能是 svg 元素本身，也可能是 zoom-group（在 updateConnectedLinks 调用时）
+    let container;
+    if (svg.classList && svg.classList.contains('zoom-group')) {
+        // 传入的已经是 zoom-group
+        container = svg;
+    } else {
+        // 传入的是 svg，需要找到 zoom-group
+        const zoomGroup = svg.querySelector('g.zoom-group');
+        container = zoomGroup || svg;
+    }
+    
+    // 找到第一个节点组，将聚合连接插入到节点之前（连接线在节点下方）
+    const firstNodeGroup = container.querySelector('g[data-node-id]');
+    if (firstNodeGroup && firstNodeGroup.parentNode === container) {
+        container.insertBefore(aggregateGroup, firstNodeGroup);
+    } else {
+        container.appendChild(aggregateGroup);
+    }
     console.log(`drawAggregatedLink: 绘制聚合连接 "${group.label}" (${targetNodes.length}个分支)`);
 }
 
@@ -1010,8 +1262,8 @@ function calculateLabelOverlap(labelX, labelY, labelWidth, labelHeight, nodes, l
     
     // 检查与节点的重叠
     nodes.forEach(node => {
-        const nodeWidth = node.width || 100;
-        const nodeHeight = node.height || 40;
+        const nodeWidth = node.width || 220;
+        const nodeHeight = node.height || 85;
         
         if (rectanglesOverlap(
             labelX - labelWidth/2, labelY - labelHeight/2, labelWidth, labelHeight,
@@ -1231,29 +1483,14 @@ function drawLinks(svg, nodes, links, topic) {
         const targetWidth = target.width || calculateNodeDimensions(target.label).width;
         const targetHeight = target.height || calculateNodeDimensions(target.label).height;
         
-        // 计算连接点
-        let startX, startY, endX, endY;
-        const isSameLayer = source.layer === target.layer;
+        // 判断是否是同级连接
+        const isSameLayer = source.layer !== undefined && target.layer !== undefined && source.layer === target.layer;
         
-        if (isSameLayer) {
-            // 同层连接：从下边出发
-            startX = source.x;
-            startY = source.y + sourceHeight / 2;
-            endX = target.x;
-            endY = target.y + targetHeight / 2;
-        } else if (target.y > source.y) {
-            // 目标在下方
-            startX = source.x;
-            startY = source.y + sourceHeight / 2;
-            endX = target.x;
-            endY = target.y - targetHeight / 2;
-        } else {
-            // 目标在上方
-            startX = source.x;
-            startY = source.y - sourceHeight / 2;
-            endX = target.x;
-            endY = target.y + targetHeight / 2;
-        }
+        // 计算连接点：选择两个节点上下边中点中距离最近的两个
+        // 同级连接强制使用下方中点到下方中点
+        const sourceWithDims = { x: source.x, y: source.y, width: sourceWidth, height: sourceHeight, layer: source.layer };
+        const targetWithDims = { x: target.x, y: target.y, width: targetWidth, height: targetHeight, layer: target.layer };
+        const { startX, startY, endX, endY } = calculateNearestEdgeConnection(sourceWithDims, targetWithDims, isSameLayer);
         
         // 创建连线组
         const lineGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -1263,8 +1500,17 @@ function drawLinks(svg, nodes, links, topic) {
         let pathData = calculatePolylinePath(link, nodes, links);
         
         // 如果 calculatePolylinePath 返回 null，使用默认路径
+        // 手动创建的连线始终使用直线，不使用曲线
         if (!pathData) {
-            if (isSameLayer) {
+            if (link.isManuallyCreated) {
+                // 手动创建的连线始终使用直线
+                pathData = {
+                    isCurved: false,
+                    isPolyline: false,
+                    path: `M ${startX} ${startY} L ${endX} ${endY}`,
+                    waypoints: [{ x: startX, y: startY }, { x: endX, y: endY }]
+                };
+            } else if (isSameLayer) {
                 pathData = calculateCurvedPath(startX, startY, endX, endY);
             } else {
                 pathData = {
@@ -1364,14 +1610,24 @@ function drawLinks(svg, nodes, links, topic) {
         // 计算连线长度和断开位置
         const totalLength = Math.sqrt(Math.pow(endX - startX, 2) + Math.pow(endY - startY, 2));
         
+        // 从 link 数据中读取用户自定义的样式
+        const userLineColor = link.lineColor || '#aaa';
+        const userLineWidth = link.lineWidth || '2';
+        const userOpacity = link.opacity || '1';
+        
         // 绘制路径（中间断开放连接词）
         const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         line.setAttribute('d', pathData.path);
-        line.setAttribute('stroke', '#aaa');
-        line.setAttribute('stroke-width', '2');
+        line.setAttribute('stroke', userLineColor);
+        line.setAttribute('stroke-width', userLineWidth);
         line.setAttribute('fill', 'none');
         line.setAttribute('stroke-linecap', 'round');
         line.setAttribute('stroke-linejoin', 'round');
+        line.setAttribute('opacity', userOpacity);
+        // 保存用户样式以便后续恢复
+        line.setAttribute('data-user-color', userLineColor);
+        line.setAttribute('data-user-width', userLineWidth);
+        line.setAttribute('data-user-opacity', userOpacity);
         
         // 设置断开模式（只有当连线足够长时才断开，用于显示标签）
         if (pathData.isCurved && pathData.controlPoint) {
@@ -1432,23 +1688,41 @@ function drawLinks(svg, nodes, links, topic) {
         
         const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         arrow.setAttribute('d', `M ${endX} ${endY} L ${arrowPoint1X} ${arrowPoint1Y} L ${arrowPoint2X} ${arrowPoint2Y} Z`);
-        arrow.setAttribute('fill', '#aaa');
-        arrow.setAttribute('stroke', '#aaa');
+        arrow.setAttribute('fill', userLineColor);
+        arrow.setAttribute('stroke', userLineColor);
         arrow.setAttribute('stroke-width', '1');
+        arrow.setAttribute('opacity', userOpacity);
+        // 保存用户样式以便后续恢复
+        arrow.setAttribute('data-user-color', userLineColor);
+        arrow.setAttribute('data-user-opacity', userOpacity);
         lineGroup.appendChild(arrow);
+        
+        // 从 link 数据中读取用户自定义的文字样式
+        const userTextColor = link.textColor || '#333';
+        const userFontSize = link.fontSize || '24';
+        const userFontFamily = link.fontFamily || 'Inter, sans-serif';
+        const userFontWeight = link.fontWeight || '500';
+        const userFontStyle = link.fontStyle || 'normal';
+        const userTextDecoration = link.textDecoration || 'none';
         
         // 添加连线标签（直接放在中间断开处，不需要背景）
         const linkLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
         linkLabel.setAttribute('x', midX);
         linkLabel.setAttribute('y', midY + 4);
         linkLabel.setAttribute('text-anchor', 'middle');
-        linkLabel.setAttribute('font-size', '12');
-        linkLabel.setAttribute('fill', '#333');
-        linkLabel.setAttribute('font-weight', '500');
+        linkLabel.setAttribute('font-size', userFontSize);
+        linkLabel.setAttribute('fill', userTextColor);
+        linkLabel.setAttribute('font-weight', userFontWeight);
+        linkLabel.setAttribute('font-family', userFontFamily);
+        linkLabel.setAttribute('font-style', userFontStyle);
+        linkLabel.setAttribute('text-decoration', userTextDecoration);
+        linkLabel.setAttribute('opacity', userOpacity);
         linkLabel.setAttribute('data-link-id', link.id);
         linkLabel.setAttribute('data-link-label', 'true');
         linkLabel.setAttribute('pointer-events', 'all');
         linkLabel.setAttribute('cursor', 'pointer');
+        // 保存用户样式以便后续恢复
+        linkLabel.setAttribute('data-user-text-color', userTextColor);
         linkLabel.textContent = labelText;
         lineGroup.appendChild(linkLabel);
         
@@ -1467,7 +1741,17 @@ function drawLinks(svg, nodes, links, topic) {
         // 设置连线组样式
         lineGroup.style.cursor = 'pointer';
         
-        svg.appendChild(lineGroup);
+        // 找到合适的容器添加连线（考虑 zoom-group 的情况）
+        const zoomGroup = svg.querySelector('g.zoom-group');
+        const container = zoomGroup || svg;
+        
+        // 找到第一个节点组，将连线插入到节点之前（连线在节点下方）
+        const firstNodeGroup = container.querySelector('g[data-node-id]');
+        if (firstNodeGroup && firstNodeGroup.parentNode === container) {
+            container.insertBefore(lineGroup, firstNodeGroup);
+        } else {
+            container.appendChild(lineGroup);
+        }
     });
 }
 
@@ -1582,43 +1866,26 @@ function hasLinkNodeOverlap(link, nodes) {
     
     if (!source || !target) return { hasOverlap: false };
     
-    const sourceWidth = source.width || 100;
-    const sourceHeight = source.height || 40;
-    const targetWidth = target.width || 100;
-    const targetHeight = target.height || 40;
+    const sourceWidth = source.width || 220;
+    const sourceHeight = source.height || 85;
+    const targetWidth = target.width || 220;
+    const targetHeight = target.height || 85;
     
-    // 判断是否是同层连接
+    // 判断是否是同级连接
     const isSameLayer = source.layer !== undefined && target.layer !== undefined && source.layer === target.layer;
     
-    let startX, startY, endX, endY;
-    
-    if (isSameLayer) {
-        // 同级连接：从节点的下边中点出发
-        startX = source.x;
-        startY = source.y + sourceHeight / 2;
-        endX = target.x;
-        endY = target.y + targetHeight / 2;
-    } else {
-        // 层次连接
-        if (target.y > source.y) {
-            startX = source.x;
-            startY = source.y + sourceHeight / 2;
-            endX = target.x;
-            endY = target.y - targetHeight / 2;
-        } else {
-            startX = source.x;
-            startY = source.y - sourceHeight / 2;
-            endX = target.x;
-            endY = target.y + targetHeight / 2;
-        }
-    }
+    // 计算连接点：选择两个节点上下边中点中距离最近的两个
+    // 同级连接强制使用下方中点到下方中点
+    const sourceWithDims = { x: source.x, y: source.y, width: sourceWidth, height: sourceHeight, layer: source.layer };
+    const targetWithDims = { x: target.x, y: target.y, width: targetWidth, height: targetHeight, layer: target.layer };
+    const { startX, startY, endX, endY } = calculateNearestEdgeConnection(sourceWithDims, targetWithDims, isSameLayer);
     
     // 检查连接线是否与其他节点重叠
     for (const node of nodes) {
         if (node.id === sourceId || node.id === targetId) continue;
         
-        const nodeWidth = node.width || 100;
-        const nodeHeight = node.height || 40;
+        const nodeWidth = node.width || 220;
+        const nodeHeight = node.height || 85;
         
         if (lineRectIntersect(startX, startY, endX, endY, 
             node.x - nodeWidth / 2, node.y - nodeHeight / 2, 
@@ -1696,37 +1963,33 @@ function calculatePolylinePath(link, nodes, allLinks = null) {
     
     if (!source || !target) return null;
     
-    const sourceWidth = source.width || 100;
-    const sourceHeight = source.height || 40;
-    const targetWidth = target.width || 100;
-    const targetHeight = target.height || 40;
+    const sourceWidth = source.width || 220;
+    const sourceHeight = source.height || 85;
+    const targetWidth = target.width || 220;
+    const targetHeight = target.height || 85;
     
-    // 判断是否是同层连接
+    // 判断是否是同层连接（用于决定是否使用曲线和连接点）
     const isSameLayer = source.layer !== undefined && target.layer !== undefined && source.layer === target.layer;
     
-    let startX, startY, endX, endY;
+    // 计算连接点：选择两个节点上下边中点中距离最近的两个
+    // 同级连接强制使用下方中点到下方中点
+    const sourceWithDims = { x: source.x, y: source.y, width: sourceWidth, height: sourceHeight, layer: source.layer };
+    const targetWithDims = { x: target.x, y: target.y, width: targetWidth, height: targetHeight, layer: target.layer };
+    const { startX, startY, endX, endY } = calculateNearestEdgeConnection(sourceWithDims, targetWithDims, isSameLayer);
     
-    if (isSameLayer) {
-        // 同级连接：从节点的下边中点出发
-        startX = source.x;
-        startY = source.y + sourceHeight / 2;
-        endX = target.x;
-        endY = target.y + targetHeight / 2;
-        // 同级连接使用曲线
-        return calculateCurvedPath(startX, startY, endX, endY);
+    // 手动创建的连线始终使用直线，不使用曲线
+    if (link.isManuallyCreated) {
+        return {
+            isPolyline: false,
+            isCurved: false,
+            path: `M ${startX} ${startY} L ${endX} ${endY}`,
+            waypoints: [{ x: startX, y: startY }, { x: endX, y: endY }]
+        };
     }
     
-    // 层次连接
-    if (target.y > source.y) {
-        startX = source.x;
-        startY = source.y + sourceHeight / 2;
-        endX = target.x;
-        endY = target.y - targetHeight / 2;
-    } else {
-        startX = source.x;
-        startY = source.y - sourceHeight / 2;
-        endX = target.x;
-        endY = target.y + targetHeight / 2;
+    if (isSameLayer) {
+        // 同级连接使用曲线（从下方中点到下方中点）
+        return calculateCurvedPath(startX, startY, endX, endY);
     }
     
     // 检查是否有重叠
@@ -1772,8 +2035,8 @@ function calculateWaypoints(startX, startY, endX, endY, nodes, link) {
     for (const node of nodes) {
         if (node.id === sourceId || node.id === targetId) continue;
         
-        const nodeWidth = node.width || 100;
-        const nodeHeight = node.height || 40;
+        const nodeWidth = node.width || 220;
+        const nodeHeight = node.height || 85;
         
         if (lineRectIntersect(startX, startY, endX, endY, 
             node.x - nodeWidth / 2, node.y - nodeHeight / 2, 
@@ -2168,9 +2431,128 @@ function updateConnectedLinks(nodeId) {
         if (linkGroup) {
             updateLinkPosition(linkGroup, link);
         } else {
-            console.warn(`updateConnectedLinks: 找不到连线元素 ${linkIdStr}`);
+            // 连线元素不存在（可能是从聚合状态变成普通连线），需要创建
+            console.log(`updateConnectedLinks: 连线元素不存在，创建新的: ${linkIdStr}`);
+            createSingleLinkElement(container, link, nodeById);
         }
     });
+}
+
+/**
+ * 创建单条连线元素
+ */
+function createSingleLinkElement(container, link, nodeById) {
+    const sourceId = getLinkNodeId(link.source);
+    const targetId = getLinkNodeId(link.target);
+    
+    const source = nodeById.get(sourceId);
+    const target = nodeById.get(targetId);
+    
+    if (!source || !target) {
+        console.warn('createSingleLinkElement: 找不到源或目标节点', { sourceId, targetId });
+        return;
+    }
+    
+    if (source.x === undefined || target.x === undefined) {
+        console.warn('createSingleLinkElement: 节点没有坐标', { source, target });
+        return;
+    }
+    
+    // 计算节点尺寸
+    const sourceWidth = source.width || calculateNodeDimensions(source.label).width;
+    const sourceHeight = source.height || calculateNodeDimensions(source.label).height;
+    const targetWidth = target.width || calculateNodeDimensions(target.label).width;
+    const targetHeight = target.height || calculateNodeDimensions(target.label).height;
+    
+    // 判断是否是同级连接
+    const isSameLayer = source.layer !== undefined && target.layer !== undefined && source.layer === target.layer;
+    
+    // 计算连接点
+    const sourceWithDims = { x: source.x, y: source.y, width: sourceWidth, height: sourceHeight, layer: source.layer };
+    const targetWithDims = { x: target.x, y: target.y, width: targetWidth, height: targetHeight, layer: target.layer };
+    const { startX, startY, endX, endY } = calculateNearestEdgeConnection(sourceWithDims, targetWithDims, isSameLayer);
+    
+    // 创建连线组
+    const linkIdStr = link.id || `link-${sourceId}-${targetId}`;
+    const linkGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    linkGroup.setAttribute('data-link-id', linkIdStr);
+    linkGroup.setAttribute('class', 'link-group');
+    linkGroup.style.cursor = 'pointer';
+    
+    // 手动创建的连线始终使用直线
+    const isManuallyCreated = link.isManuallyCreated === true;
+    let pathData;
+    if (isManuallyCreated) {
+        // 手动创建的连线始终使用直线
+        pathData = `M${startX},${startY} L${endX},${endY}`;
+    } else if (isSameLayer) {
+        // 同级连接使用曲线
+        const curvedPathData = calculateCurvedPath(startX, startY, endX, endY);
+        pathData = curvedPathData.path;
+    } else {
+        // 普通连接使用直线
+        pathData = `M${startX},${startY} L${endX},${endY}`;
+    }
+    
+    // 创建路径
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    line.setAttribute('d', pathData);
+    line.setAttribute('stroke', link.lineColor || '#aaa');
+    line.setAttribute('stroke-width', link.lineWidth || '2');
+    line.setAttribute('fill', 'none');
+    line.setAttribute('opacity', link.opacity || '1');
+    if (link.lineColor) line.setAttribute('data-user-color', link.lineColor);
+    if (link.lineWidth) line.setAttribute('data-user-width', link.lineWidth);
+    if (link.opacity) line.setAttribute('data-user-opacity', link.opacity);
+    
+    linkGroup.appendChild(line);
+    
+    // 创建箭头
+    const arrowSize = 8;
+    const angle = Math.atan2(endY - startY, endX - startX);
+    const arrowPath = `M${endX},${endY} L${endX - arrowSize * Math.cos(angle - Math.PI/6)},${endY - arrowSize * Math.sin(angle - Math.PI/6)} L${endX - arrowSize * Math.cos(angle + Math.PI/6)},${endY - arrowSize * Math.sin(angle + Math.PI/6)} Z`;
+    
+    const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    arrow.setAttribute('d', arrowPath);
+    arrow.setAttribute('fill', link.lineColor || '#aaa');
+    arrow.setAttribute('stroke', link.lineColor || '#aaa');
+    arrow.setAttribute('opacity', link.opacity || '1');
+    if (link.lineColor) arrow.setAttribute('data-user-color', link.lineColor);
+    if (link.opacity) arrow.setAttribute('data-user-opacity', link.opacity);
+    
+    linkGroup.appendChild(arrow);
+    
+    // 创建标签
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+    
+    const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    labelText.setAttribute('x', midX);
+    labelText.setAttribute('y', midY - 10);
+    labelText.setAttribute('text-anchor', 'middle');
+    labelText.setAttribute('font-size', link.fontSize || '24');
+    labelText.setAttribute('font-family', link.fontFamily || 'Inter, sans-serif');
+    labelText.setAttribute('fill', link.textColor || '#333');
+    labelText.setAttribute('data-link-label', 'true');
+    labelText.textContent = link.label || '双击编辑';
+    if (link.textColor) labelText.setAttribute('data-user-text-color', link.textColor);
+    
+    linkGroup.appendChild(labelText);
+    
+    // 添加到容器（在节点之前）
+    const firstNode = container.querySelector('g[data-node-id]');
+    if (firstNode) {
+        container.insertBefore(linkGroup, firstNode);
+    } else {
+        container.appendChild(linkGroup);
+    }
+    
+    // 绑定交互事件
+    if (typeof attachLinkInteractionListeners === 'function') {
+        attachLinkInteractionListeners(linkGroup, linkIdStr);
+    }
+    
+    console.log(`createSingleLinkElement: 创建连线 ${linkIdStr}`);
 }
 
 /**
@@ -2197,26 +2579,14 @@ function updateLinkPosition(linkGroup, link) {
     const targetWidth = targetNode.width || calculateNodeDimensions(targetNode.label).width;
     const targetHeight = targetNode.height || calculateNodeDimensions(targetNode.label).height;
     
-    // 计算连接点
-    let startX, startY, endX, endY;
-    const isSameLayer = sourceNode.layer === targetNode.layer;
+    // 判断是否是同层连接（必须两个节点都有有效的 layer 属性，且 layer 相同）
+    const isSameLayer = sourceNode.layer !== undefined && targetNode.layer !== undefined && sourceNode.layer === targetNode.layer;
     
-    if (isSameLayer) {
-        startX = sourceNode.x;
-        startY = sourceNode.y + sourceHeight / 2;
-        endX = targetNode.x;
-        endY = targetNode.y + targetHeight / 2;
-    } else if (targetNode.y > sourceNode.y) {
-        startX = sourceNode.x;
-        startY = sourceNode.y + sourceHeight / 2;
-        endX = targetNode.x;
-        endY = targetNode.y - targetHeight / 2;
-            } else {
-        startX = sourceNode.x;
-        startY = sourceNode.y - sourceHeight / 2;
-        endX = targetNode.x;
-        endY = targetNode.y + targetHeight / 2;
-    }
+    // 计算连接点：选择两个节点上下边中点中距离最近的两个
+    // 同级连接强制使用下方中点到下方中点
+    const sourceWithDims = { x: sourceNode.x, y: sourceNode.y, width: sourceWidth, height: sourceHeight, layer: sourceNode.layer };
+    const targetWithDims = { x: targetNode.x, y: targetNode.y, width: targetWidth, height: targetHeight, layer: targetNode.layer };
+    const { startX, startY, endX, endY } = calculateNearestEdgeConnection(sourceWithDims, targetWithDims, isSameLayer);
     
     // 获取连接线元素
     const line = linkGroup.querySelector('path:first-child');
@@ -2424,8 +2794,8 @@ function editConceptNodeText(nodeId) {
     const nodeGroupRect = nodeGroup.getBoundingClientRect();
     
     // 获取节点矩形的尺寸
-    const nodeWidth = parseFloat(nodeRect.getAttribute('width')) || node.width || 100;
-    const nodeHeight = parseFloat(nodeRect.getAttribute('height')) || node.height || 40;
+    const nodeWidth = parseFloat(nodeRect.getAttribute('width')) || node.width || 220;
+    const nodeHeight = parseFloat(nodeRect.getAttribute('height')) || node.height || 85;
     
     // 计算输入框位置
     const nodeCenterX = nodeGroupRect.left + nodeGroupRect.width / 2;
@@ -2532,7 +2902,7 @@ function editConceptNodeText(nodeId) {
     // 关键修复：使用固定宽度 1400px
     function calculateFocusQuestionDimensions(text) {
         const width = 1400; // 固定宽度 1400px
-        const height = 60; // 固定高度 60px
+        const height = 80; // 固定高度 80px（与其他地方保持一致）
         return { width, height };
     }
 
@@ -2609,6 +2979,30 @@ function selectConceptNode(nodeId) {
             editor.selectionManager.clearSelection();
             editor.selectionManager.selectNode(nodeId);
         }
+        
+        // CRITICAL: Update stateManager selection (source of truth for getSelectedNodes)
+        // This is the primary selection state used by property panel operations
+        if (window.stateManager && typeof window.stateManager.selectNodes === 'function') {
+            window.stateManager.selectNodes([nodeId]);
+        }
+
+        // Also emit interaction:selection_changed to update ToolbarManager.currentSelection (fallback)
+        if (window.eventBus) {
+            window.eventBus.emit('interaction:selection_changed', {
+                selectedNodes: [nodeId],
+                nodeId,
+                diagramType: 'concept_map'
+            });
+        }
+
+        // 打开属性面板（通过 selection:changed 事件驱动 PropertyPanelManager）
+        if (window.eventBus) {
+            window.eventBus.emit('selection:changed', {
+                selectedNodes: [nodeId],
+                nodeId,
+                shouldAutoOpenPanel: true
+            });
+        }
     }
     
     console.log('ConceptMap: 节点已选中:', nodeId);
@@ -2636,6 +3030,19 @@ function deselectConceptNode() {
     });
     
     selectedConceptNodeId = null;
+
+    // 同步清空 SelectionManager 选中状态
+    const editor = window.interactiveEditor;
+    if (editor && editor.selectionManager) {
+        editor.selectionManager.clearSelection();
+    }
+
+    // 通知属性面板关闭/清空
+    if (window.eventBus) {
+        window.eventBus.emit('selection:cleared', {
+            shouldHidePanel: true
+        });
+    }
 }
 
 // ============================================================================
@@ -2659,8 +3066,8 @@ function addNodeHandles(nodeGroup) {
     if (!node) return;
 
     // 获取节点尺寸
-    const nodeWidth = node.width || parseFloat(rect.getAttribute('width')) || 100;
-    const nodeHeight = node.height || parseFloat(rect.getAttribute('height')) || 40;
+    const nodeWidth = node.width || parseFloat(rect.getAttribute('width')) || 220;
+    const nodeHeight = node.height || parseFloat(rect.getAttribute('height')) || 85;
 
     // 创建4个连接线手柄（四个边缘的箭头）
     const handlePositions = [
@@ -2786,8 +3193,8 @@ function createVirtualConnectionLine(sourceNodeId, direction) {
     virtualLine.setAttribute('pointer-events', 'none');
     
     // 计算起点
-    const nodeWidth = sourceNode.width || 100;
-    const nodeHeight = sourceNode.height || 40;
+    const nodeWidth = sourceNode.width || 220;
+    const nodeHeight = sourceNode.height || 85;
     
     let startX, startY;
     switch (direction) {
@@ -2943,7 +3350,7 @@ function createConceptLink(sourceId, targetId) {
         id: `link-${sourceId}-${targetId}`,
         source: sourceId,
         target: targetId,
-        label: '',
+        label: '生成中...',  // 临时标签，等待LLM生成
         isManuallyCreated: true  // 手动创建的连线始终使用直线
     };
     
@@ -2951,14 +3358,108 @@ function createConceptLink(sourceId, targetId) {
     currentGraphData.links.push(newLink);
     window.currentGraphData = currentGraphData;
     
-    // 保存到历史记录（支持撤销）
-    saveToHistory(currentGraphData);
-    console.log('ConceptMap: 历史记录已保存');
-    
-    // 直接在SVG中绘制新连线
+    // 直接在SVG中绘制新连线（先显示临时标签）
     drawSingleLink(newLink);
     
     console.log('ConceptMap: 连线已创建:', sourceId, '→', targetId);
+    
+    // 异步调用LLM生成连接词
+    generateLinkLabelAsync(newLink, sourceNode.label, targetNode.label);
+}
+
+/**
+ * 异步生成连接词
+ */
+async function generateLinkLabelAsync(link, sourceLabel, targetLabel) {
+    console.log('ConceptMap: 开始生成连接词', sourceLabel, '→', targetLabel);
+    
+    try {
+        // 获取焦点问题作为上下文
+        let focusQuestion = '';
+        const focusNode = currentGraphData?.nodes?.find(n => n.isFocusQuestion || n.id === 'focus-question-node');
+        if (focusNode && focusNode.label) {
+            // 从 "焦点问题：xxx" 中提取实际问题
+            focusQuestion = focusNode.label.replace(/^焦点问题[：:]\s*/, '');
+        }
+        
+        // 调用API生成连接词
+        const response = await fetch('/api/generate_link_label', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                source_concept: sourceLabel,
+                target_concept: targetLabel,
+                focus_question: focusQuestion,
+                language: 'zh',
+                llm: 'qwen'  // 使用默认模型，可以改为从配置读取
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        if (data.success && data.link_label) {
+            // 更新连线标签
+            link.label = data.link_label;
+            
+            // 更新数据中的连线
+            const existingLink = currentGraphData.links.find(l => l.id === link.id);
+            if (existingLink) {
+                existingLink.label = data.link_label;
+            }
+            window.currentGraphData = currentGraphData;
+            
+            // 更新DOM中的标签显示
+            updateLinkLabelInDOM(link.id, data.link_label);
+            
+            // 保存到历史记录
+            saveToHistory(currentGraphData);
+            
+            console.log('ConceptMap: 连接词已生成:', data.link_label);
+            
+            if (typeof showMessage === 'function') {
+                showMessage(`已生成连接词: ${data.link_label}`, 'success');
+            }
+        } else {
+            throw new Error(data.error || '生成失败');
+        }
+    } catch (error) {
+        console.error('ConceptMap: 生成连接词失败:', error);
+        
+        // 生成失败时设置默认标签
+        link.label = '双击编辑';
+        const existingLink = currentGraphData.links.find(l => l.id === link.id);
+        if (existingLink) {
+            existingLink.label = '双击编辑';
+        }
+        window.currentGraphData = currentGraphData;
+        
+        // 更新DOM
+        updateLinkLabelInDOM(link.id, '双击编辑');
+        
+        // 保存到历史记录
+        saveToHistory(currentGraphData);
+    }
+}
+
+/**
+ * 更新DOM中的连线标签
+ */
+function updateLinkLabelInDOM(linkId, newLabel) {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    // 查找对应的标签元素
+    const labelText = svg.querySelector(`text[data-link-id="${linkId}"]`);
+    if (labelText) {
+        labelText.textContent = newLabel;
+        console.log('ConceptMap: DOM中的连接词已更新:', linkId, newLabel);
+    }
 }
 
 /**
@@ -2983,33 +3484,19 @@ function drawSingleLink(link) {
     if (!source || !target) return;
     
     // 计算节点尺寸
-    const sourceHeight = source.height || 40;
-    const targetHeight = target.height || 40;
+    const sourceWidth = source.width || 220;
+    const sourceHeight = source.height || 85;
+    const targetWidth = target.width || 220;
+    const targetHeight = target.height || 85;
     
-    // 判断是否是同层连接
-    const isSameLayer = source.layer === target.layer;
+    // 判断是否是同层连接（必须两个节点都有有效的 layer 属性，且 layer 相同）
+    const isSameLayer = source.layer !== undefined && target.layer !== undefined && source.layer === target.layer;
     
-    // 计算连接点
-    let startX, startY, endX, endY;
-    if (isSameLayer) {
-        // 同层连接：从下边出发
-        startX = source.x;
-        startY = source.y + sourceHeight / 2;
-        endX = target.x;
-        endY = target.y + targetHeight / 2;
-    } else if (target.y > source.y) {
-        // 目标在下方（上下级）
-        startX = source.x;
-        startY = source.y + sourceHeight / 2;
-        endX = target.x;
-        endY = target.y - targetHeight / 2;
-    } else {
-        // 目标在上方
-        startX = source.x;
-        startY = source.y - sourceHeight / 2;
-        endX = target.x;
-        endY = target.y + targetHeight / 2;
-    }
+    // 计算连接点：选择两个节点上下边中点中距离最近的两个
+    // 同级连接强制使用下方中点到下方中点
+    const sourceWithDims = { x: source.x, y: source.y, width: sourceWidth, height: sourceHeight, layer: source.layer };
+    const targetWithDims = { x: target.x, y: target.y, width: targetWidth, height: targetHeight, layer: target.layer };
+    const { startX, startY, endX, endY } = calculateNearestEdgeConnection(sourceWithDims, targetWithDims, isSameLayer);
     
     // 创建连线组
     const lineGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -3135,7 +3622,7 @@ function drawSingleLink(link) {
     linkLabel.setAttribute('x', midX);
     linkLabel.setAttribute('y', midY + 4);
     linkLabel.setAttribute('text-anchor', 'middle');
-    linkLabel.setAttribute('font-size', '12');
+    linkLabel.setAttribute('font-size', '24');
     linkLabel.setAttribute('fill', '#333');
     linkLabel.setAttribute('font-weight', '500');
     linkLabel.setAttribute('data-link-id', link.id);
@@ -3478,7 +3965,7 @@ function addNewNode() {
         text.setAttribute('y', 0);
         text.setAttribute('text-anchor', 'middle');
         text.setAttribute('dominant-baseline', 'middle');
-        text.setAttribute('font-size', '14');
+        text.setAttribute('font-size', '24');
         text.setAttribute('font-weight', '500');
         text.setAttribute('fill', 'white');
         text.setAttribute('pointer-events', 'none');
@@ -3511,6 +3998,122 @@ function addNewNode() {
     console.log('ConceptMap: addNewNode 函数执行完成');
     return newNode;
 }
+
+/**
+ * 在指定位置添加概念节点（用于拖拽放置）
+ * @param {string} conceptText - 概念文本
+ * @param {number} x - X坐标
+ * @param {number} y - Y坐标
+ */
+function addConceptNodeAtPosition(conceptText, x, y) {
+    console.log('ConceptMap: addConceptNodeAtPosition', { conceptText, x, y });
+    
+    // 确保有图数据
+    if (!currentGraphData) {
+        currentGraphData = { nodes: [], links: [], metadata: {} };
+    }
+    if (!currentGraphData.nodes) {
+        currentGraphData.nodes = [];
+    }
+    if (!currentGraphData.links) {
+        currentGraphData.links = [];
+    }
+    
+    // 生成新节点ID
+    const existingIds = currentGraphData.nodes.map(n => {
+        const match = n.id.match(/node-concept-(\d+)/);
+        return match ? parseInt(match[1]) : 0;
+    });
+    const maxId = existingIds.length > 0 ? Math.max(...existingIds) : -1;
+    const newNodeId = `node-concept-${maxId + 1}`;
+    
+    // 计算节点尺寸
+    const dims = calculateNodeDimensions(conceptText);
+    
+    // 创建新节点
+    const newNode = {
+        id: newNodeId,
+        label: conceptText,
+        x: x,
+        y: y,
+        width: dims.width,
+        height: dims.height,
+        layer: 2,
+        type: 'concept'
+    };
+    
+    // 添加到数据
+    currentGraphData.nodes.push(newNode);
+    window.currentGraphData = currentGraphData;
+    
+    console.log('ConceptMap: 新概念节点已添加到数据，ID:', newNodeId);
+    
+    // 在 SVG 中渲染节点
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (svg) {
+        const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('data-node-id', newNode.id);
+        g.setAttribute('transform', `translate(${newNode.x}, ${newNode.y})`);
+        
+        const nodeWidth = newNode.width;
+        const nodeHeight = newNode.height;
+        const radius = 10;
+        
+        // 创建圆角矩形
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', -nodeWidth / 2);
+        rect.setAttribute('y', -nodeHeight / 2);
+        rect.setAttribute('width', nodeWidth);
+        rect.setAttribute('height', nodeHeight);
+        rect.setAttribute('rx', radius);
+        rect.setAttribute('ry', radius);
+        rect.setAttribute('fill', '#667eea');
+        rect.setAttribute('fill-opacity', '0.9');
+        rect.setAttribute('stroke', '#fff');
+        rect.setAttribute('stroke-width', '2');
+        rect.setAttribute('cursor', 'pointer');
+        g.appendChild(rect);
+        
+        // 创建文字
+        const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        text.setAttribute('x', 0);
+        text.setAttribute('y', 0);
+        text.setAttribute('text-anchor', 'middle');
+        text.setAttribute('dominant-baseline', 'middle');
+        text.setAttribute('font-size', '24');
+        text.setAttribute('font-weight', '500');
+        text.setAttribute('fill', 'white');
+        text.setAttribute('pointer-events', 'none');
+        text.textContent = newNode.label;
+        g.appendChild(text);
+        
+        // 找到合适的容器添加节点
+        const zoomGroup = svg.querySelector('g.zoom-group');
+        const container = zoomGroup || svg;
+        container.appendChild(g);
+        
+        // 添加拖动监听器
+        attachDragListeners(g, newNode.id);
+        
+        // 添加交互监听器
+        attachNodeInteractionListeners(g, newNode.id);
+        
+        console.log('ConceptMap: 概念节点已渲染到画布');
+    }
+    
+    // 保存到历史记录
+    saveToHistory(currentGraphData);
+    
+    // 显示消息
+    if (typeof showMessage === 'function') {
+        showMessage(`已添加概念: ${conceptText}`, 'success');
+    }
+    
+    return newNode;
+}
+
+// 导出到全局
+window.addConceptNodeAtPosition = addConceptNodeAtPosition;
 
 // ============================================================================
 // 连线选中和编辑功能（移植自 concept-map-new-master/web/interactions.js）
@@ -3761,39 +4364,417 @@ function selectLink(linkId) {
     // 取消节点选中（节点和连线选中互斥）
     deselectConceptNode();
     
-    // 先取消所有连线的选中状态
+    // 取消聚合连接选中
+    deselectAggregateLink();
+    
+    // 清除节点选择状态
+    if (window.stateManager && typeof window.stateManager.selectNodes === 'function') {
+        window.stateManager.selectNodes([]);
+    }
+    
+    // 先取消所有连线的选中状态（恢复到用户设置的样式）
     const allLinks = svg.querySelectorAll('g[data-link-id]');
     allLinks.forEach(linkGroup => {
         const line = linkGroup.querySelector('path:first-child');
         const arrow = linkGroup.querySelector('path:nth-child(2)');
         if (line) {
-            line.setAttribute('stroke', '#aaa');
-            line.setAttribute('stroke-width', '2');
+            // 恢复到用户设置的样式，而不是默认值
+            const savedColor = line.getAttribute('data-user-color') || '#aaa';
+            const savedWidth = line.getAttribute('data-user-width') || '2';
+            line.setAttribute('stroke', savedColor);
+            line.setAttribute('stroke-width', savedWidth);
         }
         if (arrow) {
-            arrow.setAttribute('fill', '#aaa');
-            arrow.setAttribute('stroke', '#aaa');
+            const savedColor = arrow.getAttribute('data-user-color') || '#aaa';
+            arrow.setAttribute('fill', savedColor);
+            arrow.setAttribute('stroke', savedColor);
         }
     });
 
+    // 移除之前的连接词手柄
+    removeLinkLabelHandles();
+    
     // 选中新连线
     selectedLinkId = linkId;
     const linkGroup = svg.querySelector(`g[data-link-id="${linkId}"]`);
     if (linkGroup) {
         const line = linkGroup.querySelector('path:first-child');
         const arrow = linkGroup.querySelector('path:nth-child(2)');
+        
+        // 获取连线数据（用于初始化用户设置）
+        const link = currentGraphData?.links?.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+        
         if (line) {
+            // 如果还没有保存用户设置，使用数据中的值或当前值进行初始化
+            if (!line.hasAttribute('data-user-color')) {
+                const currentColor = link?.lineColor || line.getAttribute('stroke') || '#aaa';
+                line.setAttribute('data-user-color', currentColor);
+            }
+            if (!line.hasAttribute('data-user-width')) {
+                const currentWidth = link?.lineWidth || line.getAttribute('stroke-width') || '2';
+                line.setAttribute('data-user-width', currentWidth);
+            }
+            if (!line.hasAttribute('data-user-opacity')) {
+                const currentOpacity = link?.opacity || line.getAttribute('opacity') || '1';
+                line.setAttribute('data-user-opacity', currentOpacity);
+            }
+            
+            // 设置选中高亮样式
             line.setAttribute('stroke', '#ffd700'); // 金色表示选中
             line.setAttribute('stroke-width', '3'); // 加粗
         }
         if (arrow) {
+            // 如果还没有保存用户设置，使用数据中的值或当前值进行初始化
+            if (!arrow.hasAttribute('data-user-color')) {
+                const currentColor = link?.lineColor || arrow.getAttribute('fill') || '#aaa';
+                arrow.setAttribute('data-user-color', currentColor);
+            }
+            if (!arrow.hasAttribute('data-user-opacity')) {
+                const currentOpacity = link?.opacity || arrow.getAttribute('opacity') || '1';
+                arrow.setAttribute('data-user-opacity', currentOpacity);
+            }
+            
             arrow.setAttribute('fill', '#ffd700');
             arrow.setAttribute('stroke', '#ffd700');
+        }
+        
+        // 添加连接词手柄
+        addLinkLabelHandles(linkId);
+        
+        // 获取连线的当前样式（使用保存的用户设置或数据中的值）
+        const linkLabel = linkGroup.querySelector('text[data-link-label="true"]');
+        const linkData = {
+            linkId: linkId,
+            label: link?.label || linkLabel?.textContent || '',
+            lineColor: line?.getAttribute('data-user-color') || link?.lineColor || '#aaa',
+            lineWidth: line?.getAttribute('data-user-width') || link?.lineWidth || '2',
+            textColor: link?.textColor || linkLabel?.getAttribute('fill') || '#333',
+            fontSize: link?.fontSize || linkLabel?.getAttribute('font-size') || '24',
+            fontFamily: link?.fontFamily || linkLabel?.getAttribute('font-family') || 'Inter, sans-serif',
+            fontWeight: link?.fontWeight || linkLabel?.getAttribute('font-weight') || '500',
+            fontStyle: link?.fontStyle || linkLabel?.getAttribute('font-style') || 'normal',
+            textDecoration: link?.textDecoration || linkLabel?.getAttribute('text-decoration') || 'none',
+            opacity: line?.getAttribute('data-user-opacity') || link?.opacity || '1'
+        };
+        
+        // 触发连线选择事件，打开属性面板
+        if (window.eventBus) {
+            window.eventBus.emit('link:selected', {
+                linkId: linkId,
+                linkData: linkData,
+                diagramType: 'concept_map'
+            });
         }
     }
 
     console.log('ConceptMap: 连线已选中:', linkId);
 }
+
+/**
+ * 获取当前选中的连线ID
+ */
+function getSelectedLinkId() {
+    return selectedLinkId;
+}
+
+/**
+ * 更新连线样式（支持普通连线和聚合连接）
+ */
+function updateLinkStyle(linkId, styles) {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    // 检查是否是聚合连接
+    if (linkId.startsWith('aggregate-')) {
+        updateAggregateLinkStyle(linkId.replace('aggregate-', ''), styles);
+        return;
+    }
+    
+    const linkGroup = svg.querySelector(`g[data-link-id="${linkId}"]`);
+    if (!linkGroup) return;
+    
+    const line = linkGroup.querySelector('path:first-child');
+    const arrow = linkGroup.querySelector('path:nth-child(2)');
+    const linkLabel = linkGroup.querySelector('text[data-link-label="true"]');
+    
+    // 更新连线颜色并保存用户设置
+    if (styles.lineColor !== undefined) {
+        if (line) {
+            line.setAttribute('stroke', styles.lineColor);
+            line.setAttribute('data-user-color', styles.lineColor);  // 保存用户设置
+        }
+        if (arrow) {
+            arrow.setAttribute('fill', styles.lineColor);
+            arrow.setAttribute('stroke', styles.lineColor);
+            arrow.setAttribute('data-user-color', styles.lineColor);  // 保存用户设置
+        }
+        // 同步更新数据
+        if (currentGraphData?.links) {
+            const link = currentGraphData.links.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+            if (link) {
+                link.lineColor = styles.lineColor;
+            }
+        }
+    }
+    
+    // 更新连线宽度并保存用户设置
+    if (styles.lineWidth !== undefined) {
+        if (line) {
+            line.setAttribute('stroke-width', styles.lineWidth);
+            line.setAttribute('data-user-width', styles.lineWidth);  // 保存用户设置
+        }
+        // 同步更新数据
+        if (currentGraphData?.links) {
+            const link = currentGraphData.links.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+            if (link) {
+                link.lineWidth = styles.lineWidth;
+            }
+        }
+    }
+    
+    // 更新透明度并保存用户设置
+    if (styles.opacity !== undefined) {
+        if (line) {
+            line.setAttribute('opacity', styles.opacity);
+            line.setAttribute('data-user-opacity', styles.opacity);  // 保存用户设置
+        }
+        if (arrow) {
+            arrow.setAttribute('opacity', styles.opacity);
+            arrow.setAttribute('data-user-opacity', styles.opacity);  // 保存用户设置
+        }
+        if (linkLabel) {
+            linkLabel.setAttribute('opacity', styles.opacity);
+        }
+        // 同步更新数据
+        if (currentGraphData?.links) {
+            const link = currentGraphData.links.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+            if (link) {
+                link.opacity = styles.opacity;
+            }
+        }
+    }
+    
+    // 更新文字颜色并保存用户设置
+    if (styles.textColor !== undefined && linkLabel) {
+        linkLabel.setAttribute('fill', styles.textColor);
+        linkLabel.setAttribute('data-user-text-color', styles.textColor);  // 保存用户设置
+        // 同步更新数据
+        if (currentGraphData?.links) {
+            const link = currentGraphData.links.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+            if (link) {
+                link.textColor = styles.textColor;
+            }
+        }
+    }
+    
+    // 更新文字内容
+    if (styles.label !== undefined && linkLabel) {
+        linkLabel.textContent = styles.label;
+        // 同步更新数据
+        if (currentGraphData?.links) {
+            const link = currentGraphData.links.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+            if (link) {
+                link.label = styles.label;
+            }
+        }
+    }
+    
+    // 更新字体大小
+    if (styles.fontSize !== undefined && linkLabel) {
+        linkLabel.setAttribute('font-size', styles.fontSize);
+        // 同步更新数据
+        if (currentGraphData?.links) {
+            const link = currentGraphData.links.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+            if (link) {
+                link.fontSize = styles.fontSize;
+            }
+        }
+    }
+    
+    // 更新字体
+    if (styles.fontFamily !== undefined && linkLabel) {
+        linkLabel.setAttribute('font-family', styles.fontFamily);
+        // 同步更新数据
+        if (currentGraphData?.links) {
+            const link = currentGraphData.links.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+            if (link) {
+                link.fontFamily = styles.fontFamily;
+            }
+        }
+    }
+    
+    // 更新字体粗细
+    if (styles.fontWeight !== undefined && linkLabel) {
+        linkLabel.setAttribute('font-weight', styles.fontWeight);
+        // 同步更新数据
+        if (currentGraphData?.links) {
+            const link = currentGraphData.links.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+            if (link) {
+                link.fontWeight = styles.fontWeight;
+            }
+        }
+    }
+    
+    // 更新字体样式（斜体）
+    if (styles.fontStyle !== undefined && linkLabel) {
+        linkLabel.setAttribute('font-style', styles.fontStyle);
+        // 同步更新数据
+        if (currentGraphData?.links) {
+            const link = currentGraphData.links.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+            if (link) {
+                link.fontStyle = styles.fontStyle;
+            }
+        }
+    }
+    
+    // 更新文字装饰（下划线、删除线）
+    if (styles.textDecoration !== undefined && linkLabel) {
+        linkLabel.setAttribute('text-decoration', styles.textDecoration);
+        // 同步更新数据
+        if (currentGraphData?.links) {
+            const link = currentGraphData.links.find(l => (l.id || `link-${l.source}-${l.target}`) === linkId);
+            if (link) {
+                link.textDecoration = styles.textDecoration;
+            }
+        }
+    }
+    
+    console.log('ConceptMap: 连线样式已更新:', linkId, styles);
+}
+
+/**
+ * 更新聚合连接样式
+ */
+function updateAggregateLinkStyle(aggregateKey, styles) {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    const aggregateGroup = svg.querySelector(`g[data-aggregate-key="${aggregateKey}"]`);
+    if (!aggregateGroup) return;
+    
+    const lines = aggregateGroup.querySelectorAll('line');
+    const arrows = aggregateGroup.querySelectorAll('path');
+    const labelText = aggregateGroup.querySelector('text[data-aggregate-label="true"]');
+    
+    // 更新连线颜色
+    if (styles.lineColor !== undefined) {
+        lines.forEach(line => {
+            line.setAttribute('stroke', styles.lineColor);
+            line.setAttribute('data-user-color', styles.lineColor);
+        });
+        arrows.forEach(arrow => {
+            arrow.setAttribute('fill', styles.lineColor);
+            arrow.setAttribute('stroke', styles.lineColor);
+            arrow.setAttribute('data-user-color', styles.lineColor);
+        });
+    }
+    
+    // 更新连线宽度
+    if (styles.lineWidth !== undefined) {
+        lines.forEach(line => {
+            line.setAttribute('stroke-width', styles.lineWidth);
+            line.setAttribute('data-user-width', styles.lineWidth);
+        });
+    }
+    
+    // 更新透明度
+    if (styles.opacity !== undefined) {
+        lines.forEach(line => {
+            line.setAttribute('opacity', styles.opacity);
+            line.setAttribute('data-user-opacity', styles.opacity);
+        });
+        arrows.forEach(arrow => {
+            arrow.setAttribute('opacity', styles.opacity);
+            arrow.setAttribute('data-user-opacity', styles.opacity);
+        });
+        if (labelText) {
+            labelText.setAttribute('opacity', styles.opacity);
+        }
+        aggregateGroup.setAttribute('data-user-opacity', styles.opacity);
+    }
+    
+    // 更新文字颜色
+    if (styles.textColor !== undefined && labelText) {
+        labelText.setAttribute('fill', styles.textColor);
+        labelText.setAttribute('data-user-text-color', styles.textColor);
+    }
+    
+    // 更新文字内容（聚合连接的标签）
+    if (styles.label !== undefined && labelText) {
+        labelText.textContent = styles.label;
+        aggregateGroup.setAttribute('data-label', styles.label);
+        
+        // 同步更新相关连线的标签
+        if (selectedAggregateGroup && selectedAggregateGroup.links) {
+            selectedAggregateGroup.links.forEach(link => {
+                link.label = styles.label;
+            });
+            selectedAggregateGroup.label = styles.label;
+        }
+    }
+    
+    // 更新字体大小
+    if (styles.fontSize !== undefined && labelText) {
+        labelText.setAttribute('font-size', styles.fontSize);
+    }
+    
+    // 更新字体族
+    if (styles.fontFamily !== undefined && labelText) {
+        labelText.setAttribute('font-family', styles.fontFamily);
+    }
+    
+    // 更新字体粗细
+    if (styles.fontWeight !== undefined && labelText) {
+        labelText.setAttribute('font-weight', styles.fontWeight);
+    }
+    
+    // 更新字体样式（斜体）
+    if (styles.fontStyle !== undefined && labelText) {
+        labelText.setAttribute('font-style', styles.fontStyle);
+    }
+    
+    // 更新文字装饰（下划线、删除线）
+    if (styles.textDecoration !== undefined && labelText) {
+        labelText.setAttribute('text-decoration', styles.textDecoration);
+    }
+    
+    // 将样式保存到 currentGraphData.links 中的对应连线数据
+    // 这样当重新绘制聚合连接时可以从数据中读取
+    if (currentGraphData && currentGraphData.links) {
+        // 解析 aggregateKey 获取 sourceId 和 label
+        const parts = aggregateKey.split('_');
+        const sourceId = parts[0];
+        const label = parts.slice(1).join('_');
+        
+        // 找到所有匹配的连线并更新样式
+        currentGraphData.links.forEach(link => {
+            const linkSourceId = getLinkNodeId(link.source);
+            if (linkSourceId === sourceId && (link.label === label || (!link.label && label === '双击编辑'))) {
+                // 保存样式到连线数据
+                if (styles.lineColor !== undefined) link.lineColor = styles.lineColor;
+                if (styles.lineWidth !== undefined) link.lineWidth = styles.lineWidth;
+                if (styles.textColor !== undefined) link.textColor = styles.textColor;
+                if (styles.fontSize !== undefined) link.fontSize = styles.fontSize;
+                if (styles.fontFamily !== undefined) link.fontFamily = styles.fontFamily;
+                if (styles.fontWeight !== undefined) link.fontWeight = styles.fontWeight;
+                if (styles.fontStyle !== undefined) link.fontStyle = styles.fontStyle;
+                if (styles.textDecoration !== undefined) link.textDecoration = styles.textDecoration;
+                if (styles.opacity !== undefined) link.opacity = styles.opacity;
+                if (styles.label !== undefined) link.label = styles.label;
+            }
+        });
+        
+        // 更新全局变量
+        window.currentGraphData = currentGraphData;
+    }
+    
+    console.log('ConceptMap: 聚合连接样式已更新:', aggregateKey, styles);
+}
+
+// 暴露给全局
+window.updateLinkStyle = updateLinkStyle;
+window.updateAggregateLinkStyle = updateAggregateLinkStyle;
+window.getSelectedLinkId = getSelectedLinkId;
 
 /**
  * 取消选中连线
@@ -3809,16 +4790,852 @@ function deselectLink() {
         const line = linkGroup.querySelector('path:first-child');
         const arrow = linkGroup.querySelector('path:nth-child(2)');
         if (line) {
-            line.setAttribute('stroke', '#aaa');
-            line.setAttribute('stroke-width', '2');
+            // 恢复到用户设置的样式，而不是默认值
+            const savedColor = line.getAttribute('data-user-color') || '#aaa';
+            const savedWidth = line.getAttribute('data-user-width') || '2';
+            const savedOpacity = line.getAttribute('data-user-opacity') || '1';
+            line.setAttribute('stroke', savedColor);
+            line.setAttribute('stroke-width', savedWidth);
+            line.setAttribute('opacity', savedOpacity);
         }
         if (arrow) {
-            arrow.setAttribute('fill', '#aaa');
-            arrow.setAttribute('stroke', '#aaa');
+            const savedColor = arrow.getAttribute('data-user-color') || '#aaa';
+            const savedOpacity = arrow.getAttribute('data-user-opacity') || '1';
+            arrow.setAttribute('fill', savedColor);
+            arrow.setAttribute('stroke', savedColor);
+            arrow.setAttribute('opacity', savedOpacity);
         }
     }
     
     selectedLinkId = null;
+    
+    // 移除连接词手柄
+    removeLinkLabelHandles();
+}
+
+// 当前选中的聚合连接key
+let selectedAggregateKey = null;
+let selectedAggregateGroup = null;
+
+/**
+ * 单击选中聚合连接
+ */
+function selectAggregateLink(aggregateKey, group) {
+    console.log('ConceptMap: 选中聚合连接:', aggregateKey);
+    
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    // 取消节点选中（节点和连线选中互斥）
+    deselectConceptNode();
+    
+    // 取消普通连线选中
+    deselectLink();
+    
+    // 取消之前的聚合连接选中
+    deselectAggregateLink();
+    
+    // 选中新的聚合连接
+    selectedAggregateKey = aggregateKey;
+    selectedAggregateGroup = group;
+    
+    const aggregateGroupEl = svg.querySelector(`g[data-aggregate-key="${aggregateKey}"]`);
+    if (aggregateGroupEl) {
+        // 高亮主线和分支线（先保存原始样式）
+        const lines = aggregateGroupEl.querySelectorAll('line');
+        lines.forEach(line => {
+            // 保存原始样式（如果还没有保存）
+            if (!line.hasAttribute('data-user-color')) {
+                line.setAttribute('data-user-color', line.getAttribute('stroke') || '#aaa');
+            }
+            if (!line.hasAttribute('data-user-width')) {
+                line.setAttribute('data-user-width', line.getAttribute('stroke-width') || '2');
+            }
+            if (!line.hasAttribute('data-user-opacity')) {
+                line.setAttribute('data-user-opacity', line.getAttribute('opacity') || '1');
+            }
+            // 设置高亮
+            line.setAttribute('stroke', '#ffd700');
+            line.setAttribute('stroke-width', '3');
+        });
+        
+        // 高亮箭头（先保存原始样式）
+        const arrows = aggregateGroupEl.querySelectorAll('path');
+        arrows.forEach(arrow => {
+            // 保存原始样式（如果还没有保存）
+            if (!arrow.hasAttribute('data-user-color')) {
+                arrow.setAttribute('data-user-color', arrow.getAttribute('fill') || '#aaa');
+            }
+            if (!arrow.hasAttribute('data-user-opacity')) {
+                arrow.setAttribute('data-user-opacity', arrow.getAttribute('opacity') || '1');
+            }
+            // 设置高亮
+            arrow.setAttribute('fill', '#ffd700');
+            arrow.setAttribute('stroke', '#ffd700');
+        });
+        
+        // 添加聚合连接手柄
+        addAggregateLabelHandles(aggregateKey, group);
+        
+        // 获取聚合连接的标签元素用于读取属性
+        const labelText = aggregateGroupEl.querySelector('text[data-aggregate-label="true"]');
+        const mainLine = aggregateGroupEl.querySelector('line');
+        
+        // 构建连接数据用于属性面板
+        const linkData = {
+            linkId: `aggregate-${aggregateKey}`,
+            label: group.label || '',
+            lineColor: mainLine?.getAttribute('data-user-color') || '#aaa',
+            lineWidth: mainLine?.getAttribute('data-user-width') || '2',
+            textColor: labelText?.getAttribute('data-user-text-color') || labelText?.getAttribute('fill') || '#333',
+            fontSize: labelText?.getAttribute('font-size') || '24',
+            fontFamily: labelText?.getAttribute('font-family') || 'Inter, sans-serif',
+            fontWeight: labelText?.getAttribute('font-weight') || '500',
+            fontStyle: labelText?.getAttribute('font-style') || 'normal',
+            textDecoration: labelText?.getAttribute('text-decoration') || 'none',
+            opacity: aggregateGroupEl.getAttribute('data-user-opacity') || '1',
+            isAggregate: true,
+            aggregateKey: aggregateKey,
+            aggregateGroup: group
+        };
+        
+        // 触发连线选中事件，打开属性面板
+        if (window.eventBus) {
+            window.eventBus.emit('link:selected', {
+                linkId: `aggregate-${aggregateKey}`,
+                linkData: linkData
+            });
+        }
+    }
+    
+    console.log('ConceptMap: 聚合连接已选中:', aggregateKey);
+}
+
+/**
+ * 取消选中聚合连接
+ */
+function deselectAggregateLink() {
+    if (!selectedAggregateKey) return;
+    
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    const aggregateGroupEl = svg.querySelector(`g[data-aggregate-key="${selectedAggregateKey}"]`);
+    if (aggregateGroupEl) {
+        // 恢复主线和分支线颜色（使用保存的用户样式）
+        const lines = aggregateGroupEl.querySelectorAll('line');
+        lines.forEach(line => {
+            const savedColor = line.getAttribute('data-user-color') || '#aaa';
+            const savedWidth = line.getAttribute('data-user-width') || '2';
+            const savedOpacity = line.getAttribute('data-user-opacity') || '1';
+            line.setAttribute('stroke', savedColor);
+            line.setAttribute('stroke-width', savedWidth);
+            line.setAttribute('opacity', savedOpacity);
+        });
+        
+        // 恢复箭头颜色（使用保存的用户样式）
+        const arrows = aggregateGroupEl.querySelectorAll('path');
+        arrows.forEach(arrow => {
+            const savedColor = arrow.getAttribute('data-user-color') || '#aaa';
+            const savedOpacity = arrow.getAttribute('data-user-opacity') || '1';
+            arrow.setAttribute('fill', savedColor);
+            arrow.setAttribute('stroke', savedColor);
+            arrow.setAttribute('opacity', savedOpacity);
+        });
+    }
+    
+    selectedAggregateKey = null;
+    selectedAggregateGroup = null;
+    
+    // 移除手柄
+    removeLinkLabelHandles();
+}
+
+/**
+ * 为聚合连接添加手柄
+ */
+function addAggregateLabelHandles(aggregateKey, group) {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    // 找到聚合连接组
+    const aggregateGroupEl = svg.querySelector(`g[data-aggregate-key="${aggregateKey}"]`);
+    if (!aggregateGroupEl) return;
+    
+    // 找到连接词标签
+    const labelText = aggregateGroupEl.querySelector('text[data-aggregate-label="true"]');
+    if (!labelText) {
+        console.log('ConceptMap: 聚合连接没有标签，跳过添加手柄');
+        return;
+    }
+    
+    // 获取标签位置和文字宽度
+    const labelX = parseFloat(labelText.getAttribute('x')) || 0;
+    const labelY = parseFloat(labelText.getAttribute('y')) || 0;
+    const textContent = labelText.textContent || '';
+    const textWidth = textContent.length * 24 * 0.6; // 估算文字宽度
+    
+    // 手柄大小和偏移（向外偏移，不遮盖文字）
+    const handleOffsetX = Math.max(50, textWidth / 2 + 25); // 水平偏移
+    const handleOffsetY = 35; // 垂直偏移
+    const handleSize = 10;
+    
+    // 创建4个手柄（上下左右，向外偏移不遮盖文字）
+    const handlePositions = [
+        { x: 0, y: -handleOffsetY, direction: 'top' },
+        { x: handleOffsetX, y: 0, direction: 'right' },
+        { x: 0, y: handleOffsetY, direction: 'bottom' },
+        { x: -handleOffsetX, y: 0, direction: 'left' }
+    ];
+    
+    // 创建手柄容器
+    const handlesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    handlesGroup.setAttribute('class', 'link-label-handles');
+    handlesGroup.setAttribute('data-for-aggregate', aggregateKey);
+    
+    handlePositions.forEach(pos => {
+        const handle = createAggregateLabelHandle(labelX + pos.x, labelY + pos.y - 4, handleSize, pos.direction, aggregateKey, group);
+        handlesGroup.appendChild(handle);
+    });
+    
+    // 添加到 SVG 最上层
+    svg.appendChild(handlesGroup);
+    
+    console.log('ConceptMap: 已为聚合连接添加手柄:', aggregateKey);
+}
+
+/**
+ * 创建聚合连接的单个手柄
+ */
+function createAggregateLabelHandle(x, y, size, direction, aggregateKey, group) {
+    const handle = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    handle.setAttribute('class', 'link-label-handle');
+    handle.setAttribute('data-direction', direction);
+    handle.setAttribute('transform', `translate(${x}, ${y})`);
+    handle.style.cursor = 'crosshair';
+    
+    // 绘制箭头图标
+    const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    let pathD = '';
+    const arrowSize = size / 2;
+    
+    switch (direction) {
+        case 'top':
+            pathD = `M 0 ${-arrowSize} L ${arrowSize} ${arrowSize} L ${-arrowSize} ${arrowSize} Z`;
+            break;
+        case 'bottom':
+            pathD = `M 0 ${arrowSize} L ${arrowSize} ${-arrowSize} L ${-arrowSize} ${-arrowSize} Z`;
+            break;
+        case 'left':
+            pathD = `M ${-arrowSize} 0 L ${arrowSize} ${-arrowSize} L ${arrowSize} ${arrowSize} Z`;
+            break;
+        case 'right':
+            pathD = `M ${arrowSize} 0 L ${-arrowSize} ${-arrowSize} L ${-arrowSize} ${arrowSize} Z`;
+            break;
+    }
+    
+    arrowPath.setAttribute('d', pathD);
+    arrowPath.setAttribute('fill', '#4a90d9');
+    arrowPath.setAttribute('stroke', '#2d6cb5');
+    arrowPath.setAttribute('stroke-width', '1');
+    handle.appendChild(arrowPath);
+    
+    // 添加一个更大的透明点击区域
+    const clickArea = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    clickArea.setAttribute('r', size);
+    clickArea.setAttribute('fill', 'transparent');
+    handle.appendChild(clickArea);
+    
+    // 添加拖拽事件
+    addAggregateHandleDragEvents(handle, direction, aggregateKey, group);
+    
+    return handle;
+}
+
+/**
+ * 添加聚合连接手柄的拖拽事件
+ */
+function addAggregateHandleDragEvents(handle, direction, aggregateKey, group) {
+    handle.addEventListener('mousedown', function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        
+        console.log('ConceptMap: 开始从聚合连接拖拽添加更多节点');
+        
+        // 进入拖拽模式
+        isLinkHandleDragging = true;
+        // 存储聚合连接信息而不是普通连线ID
+        linkHandleSourceLinkId = null;
+        window._aggregateDragGroup = group;  // 临时存储聚合组信息
+        
+        // 获取起始位置
+        const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+        if (!svg) return;
+        
+        const pt = svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        const svgPt = pt.matrixTransform(svg.getScreenCTM().inverse());
+        
+        // 创建虚拟连接线
+        linkHandleVirtualLine = createLinkHandleVirtualLine(svgPt.x, svgPt.y);
+        
+        // 添加全局事件监听
+        document.addEventListener('mousemove', handleLinkHandleDrag);
+        document.addEventListener('mouseup', handleAggregateHandleDragEnd);
+        
+        // 防止文本选择
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'crosshair';
+    });
+}
+
+/**
+ * 处理聚合连接手柄拖拽结束
+ */
+function handleAggregateHandleDragEnd(e) {
+    if (!isLinkHandleDragging) return;
+    
+    console.log('ConceptMap: 聚合连接手柄拖拽结束');
+    
+    // 恢复页面样式
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    
+    // 移除全局事件监听
+    document.removeEventListener('mousemove', handleLinkHandleDrag);
+    document.removeEventListener('mouseup', handleAggregateHandleDragEnd);
+    
+    // 移除高亮
+    const highlighted = document.querySelector('.node-hover-highlight');
+    if (highlighted) {
+        highlighted.classList.remove('node-hover-highlight');
+        const rect = highlighted.querySelector('rect');
+        if (rect) {
+            rect.setAttribute('stroke', rect.getAttribute('data-original-stroke') || '#4a90d9');
+            rect.setAttribute('stroke-width', rect.getAttribute('data-original-stroke-width') || '2');
+        }
+    }
+    
+    // 检查鼠标是否在目标节点上
+    const targetElement = document.elementFromPoint(e.clientX, e.clientY);
+    const targetNodeGroup = targetElement?.closest('g[data-node-id]');
+    
+    const group = window._aggregateDragGroup;
+    
+    if (targetNodeGroup && group) {
+        const targetNodeId = targetNodeGroup.getAttribute('data-node-id');
+        const sourceId = group.sourceId;
+        
+        // 检查目标节点是否已经在聚合连接中
+        const existingTargetIds = group.links.map(link => getLinkNodeId(link.target));
+        
+        if (targetNodeId !== sourceId && 
+            targetNodeId !== 'focus-question-node' && 
+            !existingTargetIds.includes(targetNodeId)) {
+            // 添加新节点到聚合连接
+            addNodeToAggregateGroup(group, targetNodeId);
+        } else if (targetNodeId === 'focus-question-node') {
+            console.log('ConceptMap: 不能连接到焦点问题节点');
+            if (typeof showMessage === 'function') {
+                showMessage('焦点问题框不能与其他节点建立连接');
+            }
+        } else if (existingTargetIds.includes(targetNodeId)) {
+            console.log('ConceptMap: 该节点已经在聚合连接中');
+            if (typeof showMessage === 'function') {
+                showMessage('该节点已经在聚合连接中', 'info');
+            }
+        } else {
+            console.log('ConceptMap: 不能连接到源节点');
+        }
+    } else {
+        console.log('ConceptMap: 请拖拽到目标节点上完成连接');
+    }
+    
+    // 清理
+    window._aggregateDragGroup = null;
+    
+    // 移除虚拟连接线
+    if (linkHandleVirtualLine) {
+        linkHandleVirtualLine.remove();
+        linkHandleVirtualLine = null;
+    }
+    
+    // 重置状态
+    isLinkHandleDragging = false;
+    linkHandleSourceLinkId = null;
+}
+
+/**
+ * 将新节点添加到聚合连接组
+ */
+function addNodeToAggregateGroup(group, targetNodeId) {
+    if (!currentGraphData || !currentGraphData.links) {
+        console.error('ConceptMap: 没有图数据');
+        return;
+    }
+    
+    const sourceId = group.sourceId;
+    const linkLabel = group.label;
+    
+    // 检查是否已存在相同的连线
+    const existingLink = currentGraphData.links.find(link => {
+        const linkSourceId = getLinkNodeId(link.source);
+        const linkTargetId = getLinkNodeId(link.target);
+        return linkSourceId === sourceId && linkTargetId === targetNodeId;
+    });
+    
+    if (existingLink) {
+        console.log('ConceptMap: 这两个节点之间已经存在连线');
+        if (typeof showMessage === 'function') {
+            showMessage('这两个节点之间已经存在连线', 'info');
+        }
+        return;
+    }
+    
+    // 保存当前状态用于撤销
+    saveToHistory(currentGraphData);
+    
+    // 创建新连线（使用相同的连接词，加入聚合）
+    const newLink = {
+        id: `link-${sourceId}-${targetNodeId}`,
+        source: sourceId,
+        target: targetNodeId,
+        label: linkLabel,
+        isManuallyCreated: true,
+        isAggregated: true  // 标记为聚合连接
+    };
+    
+    // 添加到数据中
+    currentGraphData.links.push(newLink);
+    window.currentGraphData = currentGraphData;
+    
+    console.log('ConceptMap: 已添加节点到聚合连接:', newLink);
+    
+    // 重新渲染连线
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (svg && currentGraphData.nodes) {
+        // 清除旧连线和虚拟连线
+        svg.querySelectorAll('g[data-link-id]').forEach(g => g.remove());
+        svg.querySelectorAll('g[data-aggregate-group="true"]').forEach(g => g.remove());
+        svg.querySelectorAll('.link-handle-virtual-line').forEach(v => v.remove());
+        svg.querySelectorAll('.link-label-handles').forEach(h => h.remove());
+        
+        // 重新绘制所有连线
+        drawLinks(svg, currentGraphData.nodes, currentGraphData.links, currentGraphData.topic || '');
+        
+        if (typeof showMessage === 'function') {
+            showMessage('已添加到聚合连接', 'success');
+        }
+    }
+    
+    // 取消选中
+    deselectAggregateLink();
+    
+    // 发送操作完成事件用于历史记录
+    if (window.eventBus) {
+        window.eventBus.emit('diagram:operation_completed', {
+            operation: 'add_to_aggregate_group',
+            snapshot: JSON.parse(JSON.stringify(currentGraphData)),
+            diagramType: 'concept_map'
+        });
+    }
+}
+
+// ============================================================================
+// 连接词手柄功能 - 支持拖拽创建聚合连接
+// ============================================================================
+
+// 连接词拖拽状态
+let isLinkHandleDragging = false;
+let linkHandleSourceLinkId = null;
+let linkHandleVirtualLine = null;
+
+/**
+ * 为选中的连接线添加手柄（在连接词周围）
+ */
+function addLinkLabelHandles(linkId) {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    // 找到连接线组
+    const linkGroup = svg.querySelector(`g[data-link-id="${linkId}"]`);
+    if (!linkGroup) return;
+    
+    // 找到连接词标签
+    const linkLabel = linkGroup.querySelector('text[data-link-label="true"]');
+    if (!linkLabel) {
+        console.log('ConceptMap: 连接线没有连接词标签，跳过添加手柄');
+        return;
+    }
+    
+    // 获取标签位置和文字宽度
+    const labelX = parseFloat(linkLabel.getAttribute('x')) || 0;
+    const labelY = parseFloat(linkLabel.getAttribute('y')) || 0;
+    const textContent = linkLabel.textContent || '';
+    const textWidth = textContent.length * 24 * 0.6; // 估算文字宽度
+    
+    // 手柄大小和偏移（向外偏移，不遮盖文字）
+    const handleOffsetX = Math.max(50, textWidth / 2 + 25); // 水平偏移
+    const handleOffsetY = 35; // 垂直偏移
+    const handleSize = 10;
+    
+    // 创建4个手柄（上下左右，向外偏移不遮盖文字）
+    const handlePositions = [
+        { x: 0, y: -handleOffsetY, direction: 'top' },
+        { x: handleOffsetX, y: 0, direction: 'right' },
+        { x: 0, y: handleOffsetY, direction: 'bottom' },
+        { x: -handleOffsetX, y: 0, direction: 'left' }
+    ];
+    
+    // 创建手柄容器
+    const handlesGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    handlesGroup.setAttribute('class', 'link-label-handles');
+    handlesGroup.setAttribute('data-for-link', linkId);
+    
+    handlePositions.forEach(pos => {
+        const handle = createLinkLabelHandle(labelX + pos.x, labelY + pos.y - 4, handleSize, pos.direction, linkId);
+        handlesGroup.appendChild(handle);
+    });
+    
+    // 添加到 SVG 最上层（确保可点击）
+    svg.appendChild(handlesGroup);
+    
+    console.log('ConceptMap: 已为连接词添加手柄:', linkId);
+}
+
+/**
+ * 创建单个连接词手柄
+ */
+function createLinkLabelHandle(x, y, size, direction, linkId) {
+    const handle = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    handle.setAttribute('class', 'link-label-handle');
+    handle.setAttribute('data-direction', direction);
+    handle.setAttribute('transform', `translate(${x}, ${y})`);
+    handle.style.cursor = 'crosshair';
+    
+    // 绘制箭头图标
+    const arrowPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    let pathD = '';
+    const arrowSize = size / 2;
+    
+    switch (direction) {
+        case 'top':
+            pathD = `M 0 ${-arrowSize} L ${arrowSize} ${arrowSize} L ${-arrowSize} ${arrowSize} Z`;
+            break;
+        case 'bottom':
+            pathD = `M 0 ${arrowSize} L ${arrowSize} ${-arrowSize} L ${-arrowSize} ${-arrowSize} Z`;
+            break;
+        case 'left':
+            pathD = `M ${-arrowSize} 0 L ${arrowSize} ${-arrowSize} L ${arrowSize} ${arrowSize} Z`;
+            break;
+        case 'right':
+            pathD = `M ${arrowSize} 0 L ${-arrowSize} ${-arrowSize} L ${-arrowSize} ${arrowSize} Z`;
+            break;
+    }
+    
+    arrowPath.setAttribute('d', pathD);
+    arrowPath.setAttribute('fill', '#4a90d9');
+    arrowPath.setAttribute('stroke', '#2d6cb5');
+    arrowPath.setAttribute('stroke-width', '1');
+    handle.appendChild(arrowPath);
+    
+    // 添加一个更大的透明点击区域
+    const clickArea = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    clickArea.setAttribute('r', size);
+    clickArea.setAttribute('fill', 'transparent');
+    handle.appendChild(clickArea);
+    
+    // 添加拖拽事件
+    addLinkHandleDragEvents(handle, direction, linkId);
+    
+    return handle;
+}
+
+/**
+ * 添加连接词手柄的拖拽事件
+ */
+function addLinkHandleDragEvents(handle, direction, linkId) {
+    handle.addEventListener('mousedown', function(e) {
+        e.stopPropagation();
+        e.preventDefault();
+        
+        console.log('ConceptMap: 开始从连接词拖拽创建聚合连接');
+        
+        // 进入拖拽模式
+        isLinkHandleDragging = true;
+        linkHandleSourceLinkId = linkId;
+        
+        // 获取起始位置（手柄位置）
+        const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+        if (!svg) return;
+        
+        const pt = svg.createSVGPoint();
+        pt.x = e.clientX;
+        pt.y = e.clientY;
+        const svgPt = pt.matrixTransform(svg.getScreenCTM().inverse());
+        
+        // 创建虚拟连接线
+        linkHandleVirtualLine = createLinkHandleVirtualLine(svgPt.x, svgPt.y);
+        
+        // 添加全局事件监听
+        document.addEventListener('mousemove', handleLinkHandleDrag);
+        document.addEventListener('mouseup', handleLinkHandleDragEnd);
+        
+        // 防止文本选择
+        document.body.style.userSelect = 'none';
+        document.body.style.cursor = 'crosshair';
+    });
+}
+
+/**
+ * 创建连接词手柄拖拽时的虚拟连接线
+ */
+function createLinkHandleVirtualLine(startX, startY) {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return null;
+    
+    const virtualLine = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    virtualLine.setAttribute('d', `M ${startX} ${startY} L ${startX} ${startY}`);
+    virtualLine.setAttribute('stroke', '#4a90d9');
+    virtualLine.setAttribute('stroke-width', '2');
+    virtualLine.setAttribute('stroke-dasharray', '5,5');
+    virtualLine.setAttribute('fill', 'none');
+    virtualLine.setAttribute('data-start-x', startX);
+    virtualLine.setAttribute('data-start-y', startY);
+    virtualLine.setAttribute('class', 'link-handle-virtual-line');
+    virtualLine.style.pointerEvents = 'none';
+    
+    svg.appendChild(virtualLine);
+    
+    return virtualLine;
+}
+
+/**
+ * 处理连接词手柄拖拽
+ */
+function handleLinkHandleDrag(e) {
+    if (!isLinkHandleDragging || !linkHandleVirtualLine) return;
+    
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    // 将鼠标坐标转换为 SVG 坐标
+    const pt = svg.createSVGPoint();
+    pt.x = e.clientX;
+    pt.y = e.clientY;
+    const svgPt = pt.matrixTransform(svg.getScreenCTM().inverse());
+    
+    // 获取起点坐标
+    const startX = parseFloat(linkHandleVirtualLine.getAttribute('data-start-x'));
+    const startY = parseFloat(linkHandleVirtualLine.getAttribute('data-start-y'));
+    
+    // 更新虚拟连接线路径
+    linkHandleVirtualLine.setAttribute('d', `M ${startX} ${startY} L ${svgPt.x} ${svgPt.y}`);
+    
+    // 高亮悬停的节点
+    highlightHoveredNode(e.clientX, e.clientY);
+}
+
+/**
+ * 高亮鼠标悬停的节点
+ */
+function highlightHoveredNode(clientX, clientY) {
+    // 移除之前的高亮
+    const prevHighlighted = document.querySelector('.node-hover-highlight');
+    if (prevHighlighted) {
+        prevHighlighted.classList.remove('node-hover-highlight');
+        const rect = prevHighlighted.querySelector('rect');
+        if (rect) {
+            rect.setAttribute('stroke', rect.getAttribute('data-original-stroke') || '#4a90d9');
+            rect.setAttribute('stroke-width', rect.getAttribute('data-original-stroke-width') || '2');
+        }
+    }
+    
+    // 查找当前悬停的节点
+    const targetElement = document.elementFromPoint(clientX, clientY);
+    const targetNodeGroup = targetElement?.closest('g[data-node-id]');
+    
+    if (targetNodeGroup) {
+        targetNodeGroup.classList.add('node-hover-highlight');
+        const rect = targetNodeGroup.querySelector('rect');
+        if (rect) {
+            // 保存原始样式
+            if (!rect.hasAttribute('data-original-stroke')) {
+                rect.setAttribute('data-original-stroke', rect.getAttribute('stroke') || '#4a90d9');
+                rect.setAttribute('data-original-stroke-width', rect.getAttribute('stroke-width') || '2');
+            }
+            // 设置高亮样式
+            rect.setAttribute('stroke', '#ffd700');
+            rect.setAttribute('stroke-width', '3');
+        }
+    }
+}
+
+/**
+ * 处理连接词手柄拖拽结束
+ */
+function handleLinkHandleDragEnd(e) {
+    if (!isLinkHandleDragging) return;
+    
+    console.log('ConceptMap: 连接词手柄拖拽结束');
+    
+    // 恢复页面样式
+    document.body.style.userSelect = '';
+    document.body.style.cursor = '';
+    
+    // 移除全局事件监听
+    document.removeEventListener('mousemove', handleLinkHandleDrag);
+    document.removeEventListener('mouseup', handleLinkHandleDragEnd);
+    
+    // 移除高亮
+    const highlighted = document.querySelector('.node-hover-highlight');
+    if (highlighted) {
+        highlighted.classList.remove('node-hover-highlight');
+        const rect = highlighted.querySelector('rect');
+        if (rect) {
+            rect.setAttribute('stroke', rect.getAttribute('data-original-stroke') || '#4a90d9');
+            rect.setAttribute('stroke-width', rect.getAttribute('data-original-stroke-width') || '2');
+        }
+    }
+    
+    // 检查鼠标是否在目标节点上
+    const targetElement = document.elementFromPoint(e.clientX, e.clientY);
+    const targetNodeGroup = targetElement?.closest('g[data-node-id]');
+    
+    if (targetNodeGroup && linkHandleSourceLinkId) {
+        const targetNodeId = targetNodeGroup.getAttribute('data-node-id');
+        
+        // 获取原连接线信息
+        const sourceLink = currentGraphData?.links?.find(link => {
+            const linkId = link.id || `link-${getLinkNodeId(link.source)}-${getLinkNodeId(link.target)}`;
+            return linkId === linkHandleSourceLinkId;
+        });
+        
+        if (sourceLink) {
+            const sourceLinkSourceId = getLinkNodeId(sourceLink.source);
+            const sourceLinkTargetId = getLinkNodeId(sourceLink.target);
+            
+            // 不能连接到原连接线的源节点或目标节点
+            if (targetNodeId !== sourceLinkSourceId && targetNodeId !== sourceLinkTargetId && targetNodeId !== 'focus-question-node') {
+                // 创建聚合连接
+                addToAggregateLink(sourceLink, targetNodeId);
+            } else if (targetNodeId === 'focus-question-node') {
+                console.log('ConceptMap: 不能连接到焦点问题节点');
+                if (typeof showMessage === 'function') {
+                    showMessage('焦点问题框不能与其他节点建立连接');
+                }
+            } else {
+                console.log('ConceptMap: 不能连接到原连接线的节点');
+            }
+        }
+    } else {
+        console.log('ConceptMap: 请拖拽到目标节点上完成连接');
+    }
+    
+    // 移除虚拟连接线
+    if (linkHandleVirtualLine) {
+        linkHandleVirtualLine.remove();
+        linkHandleVirtualLine = null;
+    }
+    
+    // 重置状态
+    isLinkHandleDragging = false;
+    linkHandleSourceLinkId = null;
+}
+
+/**
+ * 将目标节点添加到聚合连接
+ */
+function addToAggregateLink(sourceLink, targetNodeId) {
+    if (!currentGraphData || !currentGraphData.links) {
+        console.error('ConceptMap: 没有图数据');
+        return;
+    }
+    
+    const sourceLinkSourceId = getLinkNodeId(sourceLink.source);
+    const linkLabel = sourceLink.label || '双击编辑';  // 使用默认标签
+    
+    // 检查是否已存在相同的连线
+    const existingLink = currentGraphData.links.find(link => {
+        const linkSourceId = getLinkNodeId(link.source);
+        const linkTargetId = getLinkNodeId(link.target);
+        return linkSourceId === sourceLinkSourceId && linkTargetId === targetNodeId;
+    });
+    
+    if (existingLink) {
+        console.log('ConceptMap: 这两个节点之间已经存在连线');
+        if (typeof showMessage === 'function') {
+            showMessage('这两个节点之间已经存在连线', 'info');
+        }
+        return;
+    }
+    
+    // 保存当前状态用于撤销
+    saveToHistory(currentGraphData);
+    
+    // 创建新连线（使用相同的连接词，形成聚合）
+    const newLink = {
+        id: `link-${sourceLinkSourceId}-${targetNodeId}`,
+        source: sourceLinkSourceId,
+        target: targetNodeId,
+        label: linkLabel,  // 使用相同的连接词
+        isManuallyCreated: true,
+        isAggregated: true  // 标记为聚合连接
+    };
+    
+    // 同时标记源连线为聚合连接
+    sourceLink.isAggregated = true;
+    
+    // 添加到数据中
+    currentGraphData.links.push(newLink);
+    window.currentGraphData = currentGraphData;
+    
+    console.log('ConceptMap: 已创建聚合连接:', newLink);
+    
+    // 重新渲染连线（drawLinks 内部会自动处理聚合连接样式和事件绑定）
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (svg && currentGraphData.nodes) {
+        // 清除旧连线和虚拟连线
+        svg.querySelectorAll('g[data-link-id]').forEach(g => g.remove());
+        svg.querySelectorAll('g[data-aggregate-group="true"]').forEach(g => g.remove());
+        svg.querySelectorAll('.link-handle-virtual-line').forEach(v => v.remove());
+        svg.querySelectorAll('.link-label-handles').forEach(h => h.remove());
+        
+        // 重新绘制所有连线（使用现有的聚合连接样式）
+        drawLinks(svg, currentGraphData.nodes, currentGraphData.links, currentGraphData.topic || '');
+        
+        if (typeof showMessage === 'function') {
+            showMessage('聚合连接创建成功', 'success');
+        }
+    }
+    
+    // 取消选中
+    deselectLink();
+    
+    // 注意：不发送 diagram:spec_updated 事件，因为它会触发完整重新渲染导致节点位置重置
+    // 我们已经手动重新渲染了连线，只需要发送 operation_completed 事件用于历史记录
+    if (window.eventBus) {
+        window.eventBus.emit('diagram:operation_completed', {
+            operation: 'add_aggregate_link',
+            snapshot: JSON.parse(JSON.stringify(currentGraphData)),
+            diagramType: 'concept_map'
+        });
+    }
+}
+
+/**
+ * 移除连接词手柄
+ */
+function removeLinkLabelHandles() {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    // 移除所有连接词手柄
+    const handles = svg.querySelectorAll('.link-label-handles');
+    handles.forEach(h => h.remove());
+    
+    console.log('ConceptMap: 已移除连接词手柄');
 }
 
 /**
@@ -3831,6 +5648,18 @@ function setupCanvasClickHandler(svg) {
             if (e.target === svg || e.target.classList.contains('background')) {
                 deselectConceptNode();
                 deselectLink();
+                deselectAggregateLink();
+                deselectAllLinks();  // 清除多选连线状态
+                
+                // 清除 StateManager 中的节点选择
+                if (window.stateManager && typeof window.stateManager.selectNodes === 'function') {
+                    window.stateManager.selectNodes([]);
+                }
+                
+                // 关闭属性面板
+                if (window.eventBus) {
+                    window.eventBus.emit('selection:cleared', { shouldHidePanel: true });
+                }
             }
         });
         svg.setAttribute('data-canvas-click-bound', 'true');
@@ -3932,20 +5761,51 @@ function deleteSelectedNode() {
     // 更新全局变量
     window.currentGraphData = currentGraphData;
     
-    // 重新绘制图形
+    // 只删除DOM元素，不重新布局
     const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
     if (svg) {
-        while (svg.firstChild) {
-            svg.removeChild(svg.firstChild);
+        // 找到合适的容器（考虑 zoom-group）
+        const zoomGroup = svg.querySelector('g.zoom-group');
+        const container = zoomGroup || svg;
+        
+        // 删除节点DOM元素
+        const nodeToRemove = container.querySelector(`g[data-node-id="${selectedConceptNodeId}"]`);
+        if (nodeToRemove) {
+            nodeToRemove.remove();
         }
-        renderConceptMap(currentGraphData);
+        
+        // 删除与该节点相关的连线DOM元素
+        const allLinkGroups = container.querySelectorAll('g[data-link-id]');
+        allLinkGroups.forEach(linkGroup => {
+            const linkId = linkGroup.getAttribute('data-link-id');
+            // 检查这条连线是否还存在于数据中
+            const linkExists = currentGraphData.links.some(link => {
+                const id = link.id || `link-${getLinkNodeId(link.source)}-${getLinkNodeId(link.target)}`;
+                return id === linkId;
+            });
+            if (!linkExists) {
+                linkGroup.remove();
+            }
+        });
+        
+        // 删除与该节点相关的聚合连接DOM元素
+        const allAggregateGroups = container.querySelectorAll('g[data-aggregate-group="true"]');
+        allAggregateGroups.forEach(aggregateGroup => {
+            const sourceId = aggregateGroup.getAttribute('data-source-id');
+            // 如果源节点被删除，移除该聚合连接
+            if (sourceId === selectedConceptNodeId) {
+                aggregateGroup.remove();
+            }
+        });
     }
+    
+    const deletedNodeId = selectedConceptNodeId;
     
     // 取消选中
     deselectConceptNode();
     
     showMessage('节点已删除', 'success');
-    console.log('deleteSelectedNode: 节点已删除:', selectedConceptNodeId);
+    console.log('deleteSelectedNode: 节点已删除:', deletedNodeId);
 }
 
 /**
@@ -3974,20 +5834,40 @@ function deleteSelectedLink() {
     // 更新全局变量
     window.currentGraphData = currentGraphData;
     
-    // 重新绘制图形
+    // 只删除DOM元素，不重新布局
     const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
     if (svg) {
-        while (svg.firstChild) {
-            svg.removeChild(svg.firstChild);
+        // 找到合适的容器（考虑 zoom-group）
+        const zoomGroup = svg.querySelector('g.zoom-group');
+        const container = zoomGroup || svg;
+        
+        // 删除连线DOM元素
+        const linkToRemove = container.querySelector(`g[data-link-id="${selectedLinkId}"]`);
+        if (linkToRemove) {
+            linkToRemove.remove();
         }
-        renderConceptMap(currentGraphData);
+        
+        // 也检查聚合连接中是否有该连线
+        const allAggregateGroups = container.querySelectorAll('g[data-aggregate-group="true"]');
+        allAggregateGroups.forEach(aggregateGroup => {
+            const branchLines = aggregateGroup.querySelectorAll(`[data-link-id="${selectedLinkId}"]`);
+            branchLines.forEach(el => el.remove());
+            
+            // 如果聚合组内没有分支线了，删除整个聚合组
+            const remainingBranches = aggregateGroup.querySelectorAll('[data-link-id]');
+            if (remainingBranches.length === 0) {
+                aggregateGroup.remove();
+            }
+        });
     }
+    
+    const deletedLinkId = selectedLinkId;
     
     // 取消选中
     deselectLink();
     
     showMessage('连线已删除', 'success');
-    console.log('deleteSelectedLink: 连线已删除:', selectedLinkId);
+    console.log('deleteSelectedLink: 连线已删除:', deletedLinkId);
 }
 
 /**
@@ -4034,6 +5914,102 @@ function clearCanvas() {
     
     showMessage('画布已清空', 'success');
     console.log('clearCanvas: 画布已清空');
+}
+
+/**
+ * 获取焦点问题框的当前文本内容
+ * @returns {string|null} 焦点问题内容，如果没有则返回 null
+ */
+function getFocusQuestionContent() {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return null;
+    
+    // 查找焦点问题节点
+    const focusQuestionNode = svg.querySelector('[data-node-id="focus-question-node"]');
+    if (!focusQuestionNode) return null;
+    
+    // 获取文本内容
+    const textElement = focusQuestionNode.querySelector('text');
+    if (!textElement) return null;
+    
+    let fullText = textElement.textContent || '';
+    
+    // 如果文本包含"焦点问题："前缀，去掉它
+    if (fullText.startsWith('焦点问题：')) {
+        fullText = fullText.substring(5);
+    } else if (fullText.startsWith('焦点问题:')) {
+        fullText = fullText.substring(5);
+    }
+    
+    return fullText.trim() || null;
+}
+
+/**
+ * 清空除焦点问题框外的所有节点和连线
+ * @returns {string|null} 焦点问题内容
+ */
+function clearConceptMapExceptFocus() {
+    if (!currentGraphData) return null;
+    
+    // 获取当前焦点问题内容
+    const focusContent = getFocusQuestionContent();
+    
+    if (!focusContent) {
+        console.warn('clearConceptMapExceptFocus: 没有找到焦点问题');
+        return null;
+    }
+    
+    // 保存当前状态用于撤销
+    saveToHistory(currentGraphData);
+    
+    // 只保留焦点问题节点
+    const focusNode = currentGraphData.nodes.find(n => n.id === 'focus-question-node' || n.isFocusQuestion);
+    
+    if (focusNode) {
+        // 更新焦点问题节点的文本（使用当前DOM中的内容）
+        focusNode.label = `焦点问题：${focusContent}`;
+        currentGraphData.nodes = [focusNode];
+    } else {
+        currentGraphData.nodes = [];
+    }
+    
+    // 清空所有连线
+    currentGraphData.links = [];
+    
+    // 清空概念列表（如果有的话）
+    if (currentGraphData.concepts) {
+        currentGraphData.concepts = [];
+    }
+    if (currentGraphData.relationships) {
+        currentGraphData.relationships = [];
+    }
+    
+    // 更新 topic
+    currentGraphData.topic = focusContent;
+    
+    // 更新全局变量
+    window.currentGraphData = currentGraphData;
+    window.focusQuestion = focusContent;
+    
+    // 重新绘制图形
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (svg) {
+        // 清除所有元素
+        while (svg.firstChild) {
+            svg.removeChild(svg.firstChild);
+        }
+        // 重新渲染（只有焦点问题框）
+        renderConceptMap(currentGraphData);
+    }
+    
+    // 取消选中
+    deselectConceptNode();
+    deselectLink();
+    deselectAggregateLink();
+    
+    console.log('clearConceptMapExceptFocus: 已清空除焦点问题框外的所有节点，焦点问题:', focusContent);
+    
+    return focusContent;
 }
 
 /**
@@ -4093,6 +6069,286 @@ function showMessage(message, type = 'info') {
 // 键盘快捷键处理
 // ============================================================================
 
+// ============================================================================
+// 全选功能
+// ============================================================================
+
+// 存储全选的连线ID列表
+let selectedLinkIds = [];
+
+/**
+ * 全选所有节点
+ */
+function selectAllNodes() {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg || !currentGraphData?.nodes) return;
+    
+    // 取消连线选择（不影响节点）
+    deselectAllLinks();
+    deselectLink();
+    
+    // 获取所有非焦点问题的节点ID（排除焦点问题框）
+    const nodeIds = currentGraphData.nodes
+        .filter(n => !n.isFocusQuestion && n.type !== 'focus-question' && n.id !== 'focus-question-node')
+        .map(n => n.id);
+    
+    if (nodeIds.length === 0) {
+        showMessage('没有可选择的节点', 'info');
+        return;
+    }
+    
+    // 先恢复所有节点的默认样式（不使用 deselectConceptNode 以避免触发 selection:cleared）
+    const allNodes = svg.querySelectorAll('g[data-node-id]');
+    allNodes.forEach(nodeGroup => {
+        const nodeId = nodeGroup.getAttribute('data-node-id');
+        const isFocusQuestion = nodeId === 'focus-question-node';
+        const rect = nodeGroup.querySelector('rect');
+        if (rect) {
+            // 恢复默认边框
+            rect.setAttribute('stroke', isFocusQuestion ? '#667eea' : '#fff');
+            rect.setAttribute('stroke-width', '2');
+        }
+        // 移除之前的控制手柄
+        removeNodeHandles(nodeGroup);
+    });
+    
+    // 清除单选状态
+    selectedConceptNodeId = null;
+    
+    // 使用 StateManager 选择所有节点
+    if (window.stateManager && typeof window.stateManager.selectNodes === 'function') {
+        window.stateManager.selectNodes(nodeIds);
+    }
+    
+    // 高亮所有被选中的节点（和单选一样的金色边框效果）
+    nodeIds.forEach(nodeId => {
+        const nodeGroup = svg.querySelector(`g[data-node-id="${nodeId}"]`);
+        if (nodeGroup) {
+            const rect = nodeGroup.querySelector('rect');
+            if (rect) {
+                // 选中时显示金色边框（和单选 selectConceptNode 一样）
+                rect.setAttribute('stroke', '#ffd700');
+                rect.setAttribute('stroke-width', '3');
+            }
+        }
+    });
+    
+    // 触发多选事件，打开属性面板（多节点模式）
+    if (window.eventBus) {
+        window.eventBus.emit('nodes:multi_selected', {
+            nodeIds: nodeIds,
+            count: nodeIds.length,
+            diagramType: 'concept_map'
+        });
+    }
+    
+    showMessage(`已选择 ${nodeIds.length} 个节点`, 'success');
+    console.log('ConceptMap: 全选节点:', nodeIds);
+}
+
+/**
+ * 全选所有连线（包括聚合连接）
+ */
+function selectAllLinks() {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg || !currentGraphData?.links) return;
+    
+    // 取消节点选择
+    deselectConceptNode();
+    if (window.stateManager && typeof window.stateManager.selectNodes === 'function') {
+        window.stateManager.selectNodes([]);
+    }
+    
+    // 取消之前的选中状态
+    deselectAggregateLink();
+    deselectLink();
+    
+    // 获取所有普通连线ID
+    const linkIds = currentGraphData.links.map(l => l.id || `link-${l.source}-${l.target}`);
+    
+    // 获取所有聚合连接的key
+    const aggregateGroups = svg.querySelectorAll('g[data-aggregate-group="true"]');
+    const aggregateKeys = Array.from(aggregateGroups).map(g => g.getAttribute('data-aggregate-key'));
+    
+    const totalCount = linkIds.length + aggregateKeys.length;
+    
+    if (totalCount === 0) {
+        showMessage('没有可选择的连线', 'info');
+        return;
+    }
+    
+    // 存储选中的连线ID（包括聚合连接的key）
+    selectedLinkIds = [...linkIds, ...aggregateKeys.map(k => `aggregate-${k}`)];
+    
+    // 高亮所有普通连线
+    linkIds.forEach(linkId => {
+        const linkGroup = svg.querySelector(`g[data-link-id="${linkId}"]`);
+        if (linkGroup) {
+            const line = linkGroup.querySelector('path:first-child');
+            const arrow = linkGroup.querySelector('path:nth-child(2)');
+            
+            if (line) {
+                // 保存用户设置（如果没有）
+                if (!line.hasAttribute('data-user-color')) {
+                    line.setAttribute('data-user-color', line.getAttribute('stroke') || '#aaa');
+                }
+                if (!line.hasAttribute('data-user-width')) {
+                    line.setAttribute('data-user-width', line.getAttribute('stroke-width') || '2');
+                }
+                if (!line.hasAttribute('data-user-opacity')) {
+                    line.setAttribute('data-user-opacity', line.getAttribute('opacity') || '1');
+                }
+                // 设置选中高亮
+                line.setAttribute('stroke', '#ffd700');
+                line.setAttribute('stroke-width', '3');
+            }
+            if (arrow) {
+                if (!arrow.hasAttribute('data-user-color')) {
+                    arrow.setAttribute('data-user-color', arrow.getAttribute('fill') || '#aaa');
+                }
+                if (!arrow.hasAttribute('data-user-opacity')) {
+                    arrow.setAttribute('data-user-opacity', arrow.getAttribute('opacity') || '1');
+                }
+                arrow.setAttribute('fill', '#ffd700');
+                arrow.setAttribute('stroke', '#ffd700');
+            }
+        }
+    });
+    
+    // 高亮所有聚合连接
+    aggregateGroups.forEach(aggregateGroupEl => {
+        // 高亮主线和分支线
+        const lines = aggregateGroupEl.querySelectorAll('line');
+        lines.forEach(line => {
+            // 保存用户设置（如果没有）
+            if (!line.hasAttribute('data-user-color')) {
+                line.setAttribute('data-user-color', line.getAttribute('stroke') || '#aaa');
+            }
+            if (!line.hasAttribute('data-user-width')) {
+                line.setAttribute('data-user-width', line.getAttribute('stroke-width') || '2');
+            }
+            if (!line.hasAttribute('data-user-opacity')) {
+                line.setAttribute('data-user-opacity', line.getAttribute('opacity') || '1');
+            }
+            line.setAttribute('stroke', '#ffd700');
+            line.setAttribute('stroke-width', '3');
+        });
+        
+        // 高亮箭头
+        const arrows = aggregateGroupEl.querySelectorAll('path');
+        arrows.forEach(arrow => {
+            if (!arrow.hasAttribute('data-user-color')) {
+                arrow.setAttribute('data-user-color', arrow.getAttribute('fill') || '#aaa');
+            }
+            if (!arrow.hasAttribute('data-user-opacity')) {
+                arrow.setAttribute('data-user-opacity', arrow.getAttribute('opacity') || '1');
+            }
+            arrow.setAttribute('fill', '#ffd700');
+            arrow.setAttribute('stroke', '#ffd700');
+        });
+    });
+    
+    // 触发多选连线事件，打开属性面板（多连线模式）
+    if (window.eventBus) {
+        window.eventBus.emit('links:multi_selected', {
+            linkIds: selectedLinkIds,
+            count: selectedLinkIds.length,
+            diagramType: 'concept_map'
+        });
+    }
+    
+    const aggregateCount = aggregateKeys.length;
+    const normalCount = linkIds.length;
+    if (aggregateCount > 0) {
+        showMessage(`已选择 ${normalCount} 条连线 + ${aggregateCount} 组聚合连接`, 'success');
+    } else {
+        showMessage(`已选择 ${normalCount} 条连线`, 'success');
+    }
+    console.log('ConceptMap: 全选连线:', selectedLinkIds);
+}
+
+/**
+ * 取消全部连线选择（包括聚合连接）
+ */
+function deselectAllLinks() {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    selectedLinkIds.forEach(linkId => {
+        // 检查是否是聚合连接
+        if (linkId.startsWith('aggregate-')) {
+            const aggregateKey = linkId.replace('aggregate-', '');
+            const aggregateGroupEl = svg.querySelector(`g[data-aggregate-key="${aggregateKey}"]`);
+            if (aggregateGroupEl) {
+                // 恢复聚合连接的主线和分支线
+                const lines = aggregateGroupEl.querySelectorAll('line');
+                lines.forEach(line => {
+                    const savedColor = line.getAttribute('data-user-color') || '#aaa';
+                    const savedWidth = line.getAttribute('data-user-width') || '2';
+                    const savedOpacity = line.getAttribute('data-user-opacity') || '1';
+                    line.setAttribute('stroke', savedColor);
+                    line.setAttribute('stroke-width', savedWidth);
+                    line.setAttribute('opacity', savedOpacity);
+                });
+                
+                // 恢复聚合连接的箭头
+                const arrows = aggregateGroupEl.querySelectorAll('path');
+                arrows.forEach(arrow => {
+                    const savedColor = arrow.getAttribute('data-user-color') || '#aaa';
+                    const savedOpacity = arrow.getAttribute('data-user-opacity') || '1';
+                    arrow.setAttribute('fill', savedColor);
+                    arrow.setAttribute('stroke', savedColor);
+                    arrow.setAttribute('opacity', savedOpacity);
+                });
+            }
+        } else {
+            // 普通连线
+            const linkGroup = svg.querySelector(`g[data-link-id="${linkId}"]`);
+            if (linkGroup) {
+                const line = linkGroup.querySelector('path:first-child');
+                const arrow = linkGroup.querySelector('path:nth-child(2)');
+                
+                if (line) {
+                    const savedColor = line.getAttribute('data-user-color') || '#aaa';
+                    const savedWidth = line.getAttribute('data-user-width') || '2';
+                    const savedOpacity = line.getAttribute('data-user-opacity') || '1';
+                    line.setAttribute('stroke', savedColor);
+                    line.setAttribute('stroke-width', savedWidth);
+                    line.setAttribute('opacity', savedOpacity);
+                }
+                if (arrow) {
+                    const savedColor = arrow.getAttribute('data-user-color') || '#aaa';
+                    const savedOpacity = arrow.getAttribute('data-user-opacity') || '1';
+                    arrow.setAttribute('fill', savedColor);
+                    arrow.setAttribute('stroke', savedColor);
+                    arrow.setAttribute('opacity', savedOpacity);
+                }
+            }
+        }
+    });
+    
+    selectedLinkIds = [];
+}
+
+/**
+ * 获取当前选中的所有连线ID
+ */
+function getSelectedLinkIds() {
+    return selectedLinkIds;
+}
+
+/**
+ * 更新所有选中连线的样式
+ */
+function updateAllSelectedLinksStyle(styles) {
+    const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
+    if (!svg) return;
+    
+    selectedLinkIds.forEach(linkId => {
+        updateLinkStyle(linkId, styles);
+    });
+}
+
 /**
  * 初始化键盘快捷键
  */
@@ -4127,6 +6383,22 @@ function initKeyboardShortcuts() {
             e.preventDefault();
             console.log('Delete 被按下，执行删除操作');
             deleteSelected();
+            return;
+        }
+        
+        // Ctrl+A: 全选所有节点
+        if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+            e.preventDefault();
+            console.log('Ctrl+A 被按下，全选所有节点');
+            selectAllNodes();
+            return;
+        }
+        
+        // Ctrl+L: 全选所有连线
+        if ((e.ctrlKey || e.metaKey) && e.key === 'l') {
+            e.preventDefault();
+            console.log('Ctrl+L 被按下，全选所有连线');
+            selectAllLinks();
             return;
         }
     };
@@ -4192,6 +6464,18 @@ if (typeof window !== 'undefined') {
     window.undoConceptOperation = undoOperation;
     window.saveConceptToHistory = saveToHistory;
     window.showConceptMessage = showMessage;
+    window.clearConceptMapExceptFocus = clearConceptMapExceptFocus;
+    window.getFocusQuestionContent = getFocusQuestionContent;
+    // 全选功能导出
+    window.selectAllNodes = selectAllNodes;
+    window.selectAllLinks = selectAllLinks;
+    window.deselectAllLinks = deselectAllLinks;
+    window.getSelectedLinkIds = getSelectedLinkIds;
+    window.updateAllSelectedLinksStyle = updateAllSelectedLinksStyle;
+    // 聚合连接功能导出
+    window.selectAggregateLink = selectAggregateLink;
+    window.deselectAggregateLink = deselectAggregateLink;
+    window.updateAggregateLinkStyle = updateAggregateLinkStyle;
     
     console.log('✅ ConceptMapRenderer (concept-map style) 已注册到全局作用域');
 }

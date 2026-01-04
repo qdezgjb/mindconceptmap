@@ -111,6 +111,7 @@ class ToolbarManager {
         this.deleteNodeBtn = document.getElementById('delete-node-btn');
         this.autoCompleteBtn = document.getElementById('auto-complete-btn');
         this.lineModeBtn = document.getElementById('line-mode-btn');
+        this.interactionBtn = document.getElementById('interaction-btn');  // 🆕 Interaction button (concept map only)
         this.learningBtn = document.getElementById('learning-btn');  // 🆕 Learning Mode button
         this.thinkingBtn = document.getElementById('thinking-btn');  // 🆕 Node Palette button
         this.duplicateNodeBtn = document.getElementById('duplicate-node-btn');
@@ -156,7 +157,21 @@ class ToolbarManager {
         this.colorPaletteDropdown = document.getElementById('color-palette-dropdown');
         this.sharedColorPalette = document.getElementById('shared-color-palette');
         this.propColorHex = document.getElementById('prop-color-hex');
-        this.activeColorType = null; // 'text', 'fill', or 'stroke'
+        this.activeColorType = null; // 'text', 'fill', 'stroke', 'link-text', or 'link-line'
+        
+        // Link mode color properties
+        this.propLinkTextColor = document.getElementById('prop-link-text-color');
+        this.propLinkLineColor = document.getElementById('prop-link-line-color');
+        this.btnLinkTextColor = document.getElementById('btn-link-text-color');
+        this.btnLinkLineColor = document.getElementById('btn-link-line-color');
+        this.previewLinkTextColor = document.getElementById('preview-link-text-color');
+        this.previewLinkLineColor = document.getElementById('preview-link-line-color');
+        this.linkColorPaletteDropdown = document.getElementById('link-color-palette-dropdown');
+        this.linkSharedColorPalette = document.getElementById('link-shared-color-palette');
+        this.propLinkColorHex = document.getElementById('prop-link-color-hex');
+        this.propLinkLineWidth = document.getElementById('prop-link-line-width');
+        this.linkLineWidthValue = document.getElementById('link-line-width-value');
+        
         
         this.propStrokeWidth = document.getElementById('prop-stroke-width');
         this.propOpacity = document.getElementById('prop-opacity');
@@ -229,6 +244,10 @@ class ToolbarManager {
             e.stopPropagation();
             this.toggleLineMode();
         });
+        this.interactionBtn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.handleInteraction();
+        });
         this.flowMapOrientationBtn?.addEventListener('click', (e) => {
             e.stopPropagation();
             // CRITICAL: Only allow flip for flow_map diagram type
@@ -300,10 +319,10 @@ class ToolbarManager {
         // Text input: Apply on Enter key (but allow Ctrl+Enter for line breaks)
         this.propText?.addEventListener('keydown', (e) => {
             if (e.key === 'Enter' && !e.ctrlKey && !e.metaKey) {
-                // Regular Enter: apply text
+                // Regular Enter: apply all properties (same as clicking "应用" button)
                 e.stopPropagation();
                 e.preventDefault();
-                this.applyText();
+                this.applyAllProperties();
             } else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
                 // Ctrl+Enter: insert line break
                 e.stopPropagation();
@@ -333,7 +352,8 @@ class ToolbarManager {
         this.propTextApply?.addEventListener('click', (e) => {
             e.stopPropagation();
             e.preventDefault();
-            this.applyText();
+            // Apply text + all style properties together (consistency with other diagrams)
+            this.applyAllProperties();
         });
         
         // Reset styles button - resets to template defaults
@@ -347,32 +367,68 @@ class ToolbarManager {
             e.stopPropagation();
             e.preventDefault();
             this.toggleBold();
-            this.applyStylesRealtime(); // Apply immediately
+            if (window.propertyPanelManager?.isLinkMode) {
+                const fontWeight = this.propBold.classList.contains('active') ? 'bold' : 'normal';
+                this.applyLinkPropertyOnly('fontWeight', fontWeight);
+            } else {
+                this.applyStylesRealtime();
+            }
         });
         this.propItalic?.addEventListener('click', (e) => {
             e.stopPropagation();
             e.preventDefault();
             this.toggleItalic();
-            this.applyStylesRealtime(); // Apply immediately
+            if (window.propertyPanelManager?.isLinkMode) {
+                const fontStyle = this.propItalic.classList.contains('active') ? 'italic' : 'normal';
+                this.applyLinkPropertyOnly('fontStyle', fontStyle);
+            } else {
+                this.applyStylesRealtime();
+            }
         });
         this.propUnderline?.addEventListener('click', (e) => {
             e.stopPropagation();
             e.preventDefault();
             this.toggleUnderline();
-            this.applyStylesRealtime(); // Apply immediately
+            if (window.propertyPanelManager?.isLinkMode) {
+                this.applyLinkTextDecoration();
+            } else {
+                this.applyStylesRealtime();
+            }
         });
         this.propStrikethrough?.addEventListener('click', (e) => {
             e.stopPropagation();
             e.preventDefault();
             this.toggleStrikethrough();
-            this.applyStylesRealtime(); // Apply immediately
+            if (window.propertyPanelManager?.isLinkMode) {
+                this.applyLinkTextDecoration();
+            } else {
+                this.applyStylesRealtime();
+            }
         });
         
-        // Real-time style updates
-        this.propFontSize?.addEventListener('input', () => this.applyStylesRealtime());
-        this.propFontFamily?.addEventListener('change', () => this.applyStylesRealtime());
+        // Real-time style updates - apply ONLY the changed property
+        this.propFontSize?.addEventListener('input', () => {
+            if (window.propertyPanelManager?.isLinkMode) {
+                this.applyLinkPropertyOnly('fontSize', this.propFontSize.value);
+            } else {
+                this.applyStylesRealtime();
+            }
+        });
+        this.propFontFamily?.addEventListener('change', () => {
+            if (window.propertyPanelManager?.isLinkMode) {
+                this.applyLinkPropertyOnly('fontFamily', this.propFontFamily.value);
+            } else {
+                this.applyStylesRealtime();
+            }
+        });
         this.propStrokeWidth?.addEventListener('input', () => this.applyStylesRealtime());
-        this.propOpacity?.addEventListener('input', () => this.applyStylesRealtime());
+        this.propOpacity?.addEventListener('input', () => {
+            if (window.propertyPanelManager?.isLinkMode) {
+                this.applyLinkPropertyOnly('opacity', this.propOpacity.value);
+            } else {
+                this.applyStylesRealtime();
+            }
+        });
         
         // Initialize shared color palette
         this.initColorPalette();
@@ -407,7 +463,34 @@ class ToolbarManager {
                 !this.btnStrokeColor?.contains(e.target)) {
                 this.closeColorPalette();
             }
+            // Also close link color palette
+            if (this.linkColorPaletteDropdown && 
+                !this.linkColorPaletteDropdown.contains(e.target) &&
+                !this.btnLinkTextColor?.contains(e.target) &&
+                !this.btnLinkLineColor?.contains(e.target)) {
+                this.closeLinkColorPalette();
+            }
         });
+        
+        // Link color button click handlers
+        this.btnLinkTextColor?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleLinkColorPalette('link-text');
+        });
+        this.btnLinkLineColor?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggleLinkColorPalette('link-line');
+        });
+        
+        // Link hex input for custom colors
+        this.propLinkColorHex?.addEventListener('input', (e) => {
+            if (/^#[0-9A-F]{6}$/i.test(e.target.value)) {
+                this.applyLinkColorFromHex(e.target.value);
+            }
+        });
+        
+        // Initialize link color palette
+        this.initLinkColorPalette();
         
         // Sliders
         this.propStrokeWidth?.addEventListener('input', (e) => {
@@ -417,6 +500,15 @@ class ToolbarManager {
         this.propOpacity?.addEventListener('input', (e) => {
             const percent = Math.round(e.target.value * 100);
             this.opacityValue.textContent = `${percent}%`;
+        });
+        
+        // Link line width slider
+        this.propLinkLineWidth?.addEventListener('input', (e) => {
+            if (this.linkLineWidthValue) {
+                this.linkLineWidthValue.textContent = `${e.target.value}px`;
+            }
+            // Apply ONLY line width in real-time (not all properties)
+            this.applyLinkPropertyOnly('lineWidth', e.target.value);
         });
         
         // Listen to history state changes to update undo/redo button states
@@ -553,6 +645,25 @@ class ToolbarManager {
                 }
             }
         }, this.ownerId);
+        
+            // Listen for link selection (concept map links)
+            window.eventBus.onWithOwner('link:selected', (data) => {
+                logger.info('ToolbarManager', '=== LINK SELECTED ===', {
+                    timestamp: new Date().toISOString(),
+                    linkId: data.linkId,
+                    linkData: data.linkData,
+                    diagramType: data.diagramType
+                });
+                
+                // Clear node selection state
+                this.currentSelection = [];
+                
+                // Show property panel for link
+                this.showPropertyPanel();
+                
+                // Load link properties (PropertyPanelManager handles this)
+                // The panel will switch to link mode automatically
+            }, this.ownerId);
     }
         
         // Listen for notification requests from editor
@@ -1049,13 +1160,14 @@ class ToolbarManager {
         if (!this.activeColorType) return;
         
         const upperColor = color.toUpperCase();
+        const colorType = this.activeColorType; // Save before closing palette
         
         // Update the appropriate hidden input
-        if (this.activeColorType === 'text' && this.propTextColor) {
+        if (colorType === 'text' && this.propTextColor) {
             this.propTextColor.value = color;
-        } else if (this.activeColorType === 'fill' && this.propFillColor) {
+        } else if (colorType === 'fill' && this.propFillColor) {
             this.propFillColor.value = color;
-        } else if (this.activeColorType === 'stroke' && this.propStrokeColor) {
+        } else if (colorType === 'stroke' && this.propStrokeColor) {
             this.propStrokeColor.value = color;
         }
         
@@ -1070,11 +1182,82 @@ class ToolbarManager {
         // Update button previews
         this.updateColorPreviews();
         
-        // Apply styles in real-time
-        this.applyStylesRealtime();
+        // Apply ONLY the selected color type directly to node (not all properties)
+        this.applyColorToNode(colorType, color);
         
         // Close palette after selection
         this.closeColorPalette();
+    }
+    
+    /**
+     * Apply a specific color type directly to the selected node
+     */
+    applyColorToNode(colorType, color) {
+        // Check for multi-select mode first (Ctrl+A)
+        let selectedNodes = [];
+        if (window.propertyPanelManager?.isMultiSelectMode && window.propertyPanelManager?.selectedNodeIds?.length > 0) {
+            selectedNodes = window.propertyPanelManager.selectedNodeIds;
+        } else {
+            selectedNodes = this.currentSelection || [];
+        }
+        if (selectedNodes.length === 0) return;
+        
+        selectedNodes.forEach(nodeId => {
+            const nodeElement = d3.select(`[data-node-id="${nodeId}"]`);
+            if (nodeElement.empty()) return;
+            
+            const nodeTagName = nodeElement.node()?.tagName?.toLowerCase();
+            
+            if (colorType === 'text') {
+                // Apply text color to text elements
+                let textElements = nodeElement.selectAll('text');
+                if (!textElements.empty()) {
+                    textElements.attr('fill', color);
+                }
+                // 保存到节点数据
+                this.saveColorToNodeData(nodeId, 'textColor', color);
+            } else if (colorType === 'fill' || colorType === 'stroke') {
+                // Find the shape element for fill/stroke
+                let shapeElement = nodeElement;
+                if (nodeTagName === 'g') {
+                    const rectInGroup = nodeElement.select('rect');
+                    if (!rectInGroup.empty()) {
+                        shapeElement = rectInGroup;
+                    } else {
+                        const circleInGroup = nodeElement.select('circle, ellipse');
+                        if (!circleInGroup.empty()) {
+                            shapeElement = circleInGroup;
+                        }
+                    }
+                }
+                
+                if (colorType === 'fill') {
+                    shapeElement.attr('fill', color);
+                    // 保存到节点数据
+                    this.saveColorToNodeData(nodeId, 'fillColor', color);
+                } else if (colorType === 'stroke') {
+                    shapeElement.attr('stroke', color);
+                    // Also update data-original-stroke so SelectionManager restores the NEW value
+                    if (shapeElement.attr('data-original-stroke')) {
+                        shapeElement.attr('data-original-stroke', color);
+                    }
+                    // 保存到节点数据
+                    this.saveColorToNodeData(nodeId, 'strokeColor', color);
+                }
+            }
+        });
+    }
+    
+    /**
+     * 保存颜色到节点数据中，以便重新渲染时保留
+     */
+    saveColorToNodeData(nodeId, colorProperty, color) {
+        if (!window.currentGraphData || !window.currentGraphData.nodes) return;
+        
+        const node = window.currentGraphData.nodes.find(n => n.id === nodeId);
+        if (!node) return;
+        
+        node[colorProperty] = color;
     }
     
     /**
@@ -1083,12 +1266,14 @@ class ToolbarManager {
     applyColorFromHex(color) {
         if (!this.activeColorType) return;
         
+        const colorType = this.activeColorType; // Save color type
+        
         // Update the appropriate hidden input
-        if (this.activeColorType === 'text' && this.propTextColor) {
+        if (colorType === 'text' && this.propTextColor) {
             this.propTextColor.value = color;
-        } else if (this.activeColorType === 'fill' && this.propFillColor) {
+        } else if (colorType === 'fill' && this.propFillColor) {
             this.propFillColor.value = color;
-        } else if (this.activeColorType === 'stroke' && this.propStrokeColor) {
+        } else if (colorType === 'stroke' && this.propStrokeColor) {
             this.propStrokeColor.value = color;
         }
         
@@ -1098,8 +1283,8 @@ class ToolbarManager {
         // Update button previews
         this.updateColorPreviews();
         
-        // Apply styles in real-time
-        this.applyStylesRealtime();
+        // Apply ONLY the selected color type directly to node
+        this.applyColorToNode(colorType, color);
     }
     
     /**
@@ -1144,6 +1329,356 @@ class ToolbarManager {
             g: parseInt(result[2], 16),
             b: parseInt(result[3], 16)
         } : null;
+    }
+    
+    // ============================================================================
+    // Link Mode Color Methods
+    // ============================================================================
+    
+    /**
+     * Initialize link color palette
+     */
+    initLinkColorPalette() {
+        if (!this.linkSharedColorPalette) return;
+        
+        // Use the same colors as node palette
+        const colors = this.paletteColors || [
+            '#000000', '#333333', '#666666', '#999999', '#CCCCCC', '#FFFFFF', '#FF0000', '#00FF00',
+            '#0000FF', '#1976D2', '#2196F3', '#03A9F4', '#00BCD4', '#009688', '#4CAF50', '#8BC34A',
+            '#CDDC39', '#FFEB3B', '#FFC107', '#FF9800', '#FF5722', '#F44336', '#E91E63', '#9C27B0',
+            '#673AB7', '#3F51B5', '#795548', '#607D8B', '#FFCDD2', '#C8E6C9', '#BBDEFB', '#FFE0B2'
+        ];
+        
+        this.linkSharedColorPalette.innerHTML = '';
+        
+        colors.forEach(color => {
+            const swatch = document.createElement('div');
+            swatch.className = 'color-swatch';
+            swatch.style.backgroundColor = color;
+            swatch.dataset.color = color;
+            
+            // Add light-color class for light colors
+            const rgb = this.hexToRgb(color);
+            if (rgb && (rgb.r + rgb.g + rgb.b) > 600) {
+                swatch.classList.add('light-color');
+            }
+            
+            swatch.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.selectLinkColor(color);
+            });
+            
+            this.linkSharedColorPalette.appendChild(swatch);
+        });
+        
+        // Initialize button previews
+        this.updateLinkColorPreviews();
+    }
+    
+    /**
+     * Toggle link color palette dropdown
+     */
+    toggleLinkColorPalette(colorType) {
+        if (this.activeColorType === colorType && this.linkColorPaletteDropdown?.classList.contains('open')) {
+            this.closeLinkColorPalette();
+        } else {
+            this.openLinkColorPalette(colorType);
+        }
+    }
+    
+    /**
+     * Open link color palette
+     */
+    openLinkColorPalette(colorType) {
+        // 确保颜色面板已初始化
+        if (this.linkSharedColorPalette && this.linkSharedColorPalette.children.length === 0) {
+            this.initLinkColorPalette();
+        }
+        
+        // Close node color palette if open (MUST be before setting activeColorType!)
+        // closeColorPalette() sets activeColorType to null
+        this.closeColorPalette();
+        
+        // Set activeColorType AFTER closing node color palette
+        this.activeColorType = colorType;
+        
+        // Update button active states
+        this.btnLinkTextColor?.classList.toggle('active', colorType === 'link-text');
+        this.btnLinkLineColor?.classList.toggle('active', colorType === 'link-line');
+        
+        // Get current color for this type
+        let currentColor = '#333333';
+        if (colorType === 'link-text' && this.propLinkTextColor) {
+            currentColor = this.propLinkTextColor.value;
+        } else if (colorType === 'link-line' && this.propLinkLineColor) {
+            currentColor = this.propLinkLineColor.value;
+        }
+        
+        // Update hex input
+        if (this.propLinkColorHex) {
+            this.propLinkColorHex.value = currentColor.toUpperCase();
+        }
+        
+        // Update palette selection
+        this.updateLinkPaletteSelection(currentColor);
+        
+        // Show dropdown
+        this.linkColorPaletteDropdown?.classList.add('open');
+    }
+    
+    /**
+     * Close link color palette
+     */
+    closeLinkColorPalette() {
+        this.activeColorType = null;
+        this.linkColorPaletteDropdown?.classList.remove('open');
+        this.btnLinkTextColor?.classList.remove('active');
+        this.btnLinkLineColor?.classList.remove('active');
+    }
+    
+    /**
+     * Select a link color from the palette
+     */
+    selectLinkColor(color) {
+        if (!this.activeColorType) return;
+        
+        const upperColor = color.toUpperCase();
+        const colorType = this.activeColorType; // Save before closing palette
+        
+        // Update the appropriate hidden input
+        if (colorType === 'link-text' && this.propLinkTextColor) {
+            this.propLinkTextColor.value = color;
+        } else if (colorType === 'link-line' && this.propLinkLineColor) {
+            this.propLinkLineColor.value = color;
+        }
+        
+        // Update hex input
+        if (this.propLinkColorHex) {
+            this.propLinkColorHex.value = upperColor;
+        }
+        
+        // Update palette selection visual
+        this.updateLinkPaletteSelection(color);
+        
+        // Update button previews
+        this.updateLinkColorPreviews();
+        
+        // Apply ONLY the specific color change (not all properties)
+        this.applyLinkColorOnly(colorType, color);
+        
+        // Close palette after selection
+        this.closeLinkColorPalette();
+    }
+    
+    /**
+     * Apply link color from hex input
+     */
+    applyLinkColorFromHex(color) {
+        if (!this.activeColorType) return;
+        
+        const colorType = this.activeColorType; // Save color type
+        
+        // Update the appropriate hidden input
+        if (colorType === 'link-text' && this.propLinkTextColor) {
+            this.propLinkTextColor.value = color;
+        } else if (colorType === 'link-line' && this.propLinkLineColor) {
+            this.propLinkLineColor.value = color;
+        }
+        
+        // Update palette selection visual
+        this.updateLinkPaletteSelection(color);
+        
+        // Update button previews
+        this.updateLinkColorPreviews();
+        
+        // Apply ONLY the specific color change
+        this.applyLinkColorOnly(colorType, color);
+    }
+    
+    /**
+     * Apply only a specific link color (text or line) without affecting other properties
+     */
+    applyLinkColorOnly(colorType, color) {
+        // Check if we're in link mode
+        if (!window.propertyPanelManager?.isLinkMode) return;
+        
+        // Build styles object with only the changed color
+        const styles = {};
+        if (colorType === 'link-text') {
+            styles.textColor = color;
+        } else if (colorType === 'link-line') {
+            styles.lineColor = color;
+        }
+        
+        // Check for multi-select mode (Ctrl+L)
+        if (window.propertyPanelManager?.isMultiSelectMode && window.propertyPanelManager?.selectedLinkIds?.length > 0) {
+            // Apply to all selected links
+            const linkIds = window.propertyPanelManager.selectedLinkIds;
+            linkIds.forEach(linkId => {
+                if (typeof window.updateLinkStyle === 'function') {
+                    window.updateLinkStyle(linkId, styles);
+                }
+            });
+            return;
+        }
+        
+        // Single link mode
+        const linkId = window.propertyPanelManager?.currentLinkId;
+        if (!linkId) return;
+        
+        if (typeof window.updateLinkStyle === 'function') {
+            window.updateLinkStyle(linkId, styles);
+        }
+    }
+    
+    /**
+     * Apply only a specific link property without affecting other properties
+     */
+    applyLinkPropertyOnly(propertyName, value) {
+        // Check if we're in link mode
+        if (!window.propertyPanelManager?.isLinkMode) return;
+        
+        // Build styles object with only the changed property
+        const styles = {};
+        styles[propertyName] = value;
+        
+        // Check for multi-select mode (Ctrl+L)
+        if (window.propertyPanelManager?.isMultiSelectMode && window.propertyPanelManager?.selectedLinkIds?.length > 0) {
+            // Apply to all selected links
+            const linkIds = window.propertyPanelManager.selectedLinkIds;
+            linkIds.forEach(linkId => {
+                if (typeof window.updateLinkStyle === 'function') {
+                    window.updateLinkStyle(linkId, styles);
+                }
+            });
+            return;
+        }
+        
+        // Single link mode
+        const linkId = window.propertyPanelManager?.currentLinkId;
+        if (!linkId) return;
+        
+        if (typeof window.updateLinkStyle === 'function') {
+            window.updateLinkStyle(linkId, styles);
+        }
+    }
+    
+    /**
+     * Apply text decoration (underline, strikethrough) to links
+     */
+    applyLinkTextDecoration() {
+        const decorations = [];
+        if (this.propUnderline?.classList.contains('active')) decorations.push('underline');
+        if (this.propStrikethrough?.classList.contains('active')) decorations.push('line-through');
+        const textDecoration = decorations.length > 0 ? decorations.join(' ') : 'none';
+        this.applyLinkPropertyOnly('textDecoration', textDecoration);
+    }
+    
+    /**
+     * Update link palette selection visual
+     */
+    updateLinkPaletteSelection(selectedColor) {
+        if (!this.linkSharedColorPalette) return;
+        
+        const normalizedColor = selectedColor.toUpperCase();
+        
+        this.linkSharedColorPalette.querySelectorAll('.color-swatch').forEach(swatch => {
+            if (swatch.dataset.color.toUpperCase() === normalizedColor) {
+                swatch.classList.add('selected');
+            } else {
+                swatch.classList.remove('selected');
+            }
+        });
+    }
+    
+    /**
+     * Update link color preview bars on buttons
+     */
+    updateLinkColorPreviews() {
+        if (this.previewLinkTextColor && this.propLinkTextColor) {
+            this.previewLinkTextColor.style.backgroundColor = this.propLinkTextColor.value;
+        }
+        if (this.previewLinkLineColor && this.propLinkLineColor) {
+            this.previewLinkLineColor.style.backgroundColor = this.propLinkLineColor.value;
+        }
+    }
+    
+    /**
+     * Apply link styles in real-time (without notification)
+     */
+    applyLinkStylesRealtime() {
+        // Check if we're in link mode
+        if (!window.propertyPanelManager?.isLinkMode) return;
+        
+        // Build styles object
+        const styles = {};
+        
+        // Text color
+        if (this.propLinkTextColor) {
+            styles.textColor = this.propLinkTextColor.value;
+        }
+        
+        // Line color
+        if (this.propLinkLineColor) {
+            styles.lineColor = this.propLinkLineColor.value;
+        }
+        
+        // Line width
+        if (this.propLinkLineWidth) {
+            styles.lineWidth = this.propLinkLineWidth.value;
+        }
+        
+        // Opacity
+        if (this.propOpacity) {
+            styles.opacity = this.propOpacity.value;
+        }
+        
+        // Font size
+        if (this.propFontSize) {
+            styles.fontSize = this.propFontSize.value;
+        }
+        
+        // Font family
+        if (this.propFontFamily) {
+            styles.fontFamily = this.propFontFamily.value;
+        }
+        
+        // Font weight (bold)
+        if (this.propBold) {
+            styles.fontWeight = this.propBold.classList.contains('active') ? 'bold' : 'normal';
+        }
+        
+        // Font style (italic)
+        if (this.propItalic) {
+            styles.fontStyle = this.propItalic.classList.contains('active') ? 'italic' : 'normal';
+        }
+        
+        // Text decoration (underline, strikethrough)
+        const decorations = [];
+        if (this.propUnderline?.classList.contains('active')) decorations.push('underline');
+        if (this.propStrikethrough?.classList.contains('active')) decorations.push('line-through');
+        styles.textDecoration = decorations.length > 0 ? decorations.join(' ') : 'none';
+        
+        // Check for multi-select mode (Ctrl+L)
+        if (window.propertyPanelManager?.isMultiSelectMode && window.propertyPanelManager?.selectedLinkIds?.length > 0) {
+            // Apply to all selected links
+            const linkIds = window.propertyPanelManager.selectedLinkIds;
+            linkIds.forEach(linkId => {
+                if (typeof window.updateLinkStyle === 'function') {
+                    window.updateLinkStyle(linkId, styles);
+                }
+            });
+            return;
+        }
+        
+        // Single link mode
+        const linkId = window.propertyPanelManager?.currentLinkId;
+        if (!linkId) return;
+        
+        // Apply via global function
+        if (typeof window.updateLinkStyle === 'function') {
+            window.updateLinkStyle(linkId, styles);
+        }
     }
     
     /**
@@ -1335,6 +1870,534 @@ class ToolbarManager {
     async handleAutoComplete() {
         window.eventBus.emit('autocomplete:start_requested', {});
         logger.debug('ToolbarManager', 'Auto-complete requested via Event Bus');
+    }
+    
+    /**
+     * Handle interaction button click - generate core concepts from focus question
+     * Uses multi-model parallel generation (same pattern as auto-complete)
+     */
+    async handleInteraction() {
+        // Check if we have a focus question
+        const focusQuestion = window.focusQuestion;
+        if (!focusQuestion || !focusQuestion.trim()) {
+            if (window.showMessage) {
+                window.showMessage('请先输入焦点问题', 'error');
+            } else {
+                alert('请先输入焦点问题');
+            }
+            logger.warn('ToolbarManager', 'No focus question found for interaction');
+            return;
+        }
+        
+        // Extract focus question text
+        let focusText = focusQuestion.trim();
+        if (focusText.startsWith('焦点问题：') || focusText.startsWith('焦点问题:')) {
+            focusText = focusText.replace(/^焦点问题[：:]/, '').trim();
+        }
+        
+        if (!focusText) {
+            if (window.showMessage) {
+                window.showMessage('焦点问题不能为空', 'error');
+            } else {
+                alert('焦点问题不能为空');
+            }
+            return;
+        }
+        
+        logger.info('ToolbarManager', 'Starting multi-model core concepts generation', { focusQuestion: focusText });
+        
+        // Show loading state on interaction button
+        if (this.interactionBtn) {
+            this.interactionBtn.classList.add('loading');
+            this.interactionBtn.disabled = true;
+        }
+        
+        // Multi-model parallel generation (same pattern as LLMAutoCompleteManager.handleAutoComplete)
+        const models = ['qwen', 'deepseek', 'kimi', 'hunyuan', 'doubao'];
+        
+        // Show loading state on all LLM buttons
+        this.showNotification('正在使用5个AI模型生成核心概念...', 'info');
+        if (this.editor?.modules?.llmAutoComplete?.progressRenderer) {
+            this.editor.modules.llmAutoComplete.progressRenderer.setAllLLMButtonsLoading(true, models);
+        }
+        
+        // Store results for each model
+        this.coreConceptResults = {};
+        this.selectedConceptModel = null;
+        
+        // Create parallel requests for all models
+        const promises = models.map(model => this.callCoreConceptsAPI(model, focusText));
+        
+        try {
+            // Wait for all models to complete
+            await Promise.allSettled(promises);
+            
+            logger.info('ToolbarManager', 'All models completed core concepts generation', {
+                results: Object.keys(this.coreConceptResults).map(m => ({
+                    model: m,
+                    success: this.coreConceptResults[m]?.success,
+                    count: this.coreConceptResults[m]?.concepts?.length || 0
+                }))
+            });
+            
+            // Find first successful result and display it
+            const firstSuccess = models.find(m => this.coreConceptResults[m]?.success);
+            if (firstSuccess) {
+                this.selectedConceptModel = firstSuccess;
+                this.displayCoreConcepts(this.coreConceptResults[firstSuccess].concepts, focusText);
+            } else {
+                throw new Error('所有模型生成核心概念均失败');
+            }
+            
+        } catch (error) {
+            logger.error('ToolbarManager', 'Failed to generate core concepts', error);
+            if (window.showMessage) {
+                window.showMessage(`生成核心概念失败: ${error.message}`, 'error');
+            }
+        } finally {
+            // Remove loading state
+            if (this.interactionBtn) {
+                this.interactionBtn.classList.remove('loading');
+                this.interactionBtn.disabled = false;
+            }
+        }
+    }
+    
+    /**
+     * Call core concepts API for a single model (same pattern as LLMEngineManager.callLLMWithModel)
+     */
+    async callCoreConceptsAPI(model, focusText) {
+        const startTime = Date.now();
+        
+        try {
+            logger.debug('ToolbarManager', `Starting core concepts API call for ${model}`);
+            
+            const response = await window.auth.fetch('/api/generate_core_concepts', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    focus_question: focusText,
+                    language: 'zh',
+                    llm: model,
+                    count: 30
+                })
+            });
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+            }
+            
+            const data = await response.json();
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+            
+            if (data.success && data.concepts && data.concepts.length > 0) {
+                // Store successful result
+                this.coreConceptResults[model] = {
+                    success: true,
+                    concepts: data.concepts,
+                    elapsed: elapsed
+                };
+                
+                // Update button state to ready
+                if (this.editor?.modules?.llmAutoComplete?.progressRenderer) {
+                    this.editor.modules.llmAutoComplete.progressRenderer.setLLMButtonState(model, 'ready');
+                }
+                
+                logger.info('ToolbarManager', `✓ ${model} generated ${data.concepts.length} concepts in ${elapsed}s`);
+                
+                // If this is first success and no result displayed yet, display it
+                if (!this.selectedConceptModel) {
+                    this.selectedConceptModel = model;
+                    this.displayCoreConcepts(data.concepts, focusText);
+                    
+                    // Highlight this model's button
+                    if (this.editor?.modules?.llmAutoComplete?.progressRenderer) {
+                        this.editor.modules.llmAutoComplete.progressRenderer.highlightSelectedModel(model);
+                    }
+                }
+            } else {
+                throw new Error(data.error || '生成失败');
+            }
+            
+        } catch (error) {
+            const elapsed = ((Date.now() - startTime) / 1000).toFixed(2);
+            
+            // Store error result
+            this.coreConceptResults[model] = {
+                success: false,
+                error: error.message,
+                elapsed: elapsed
+            };
+            
+            // Update button state to error
+            if (this.editor?.modules?.llmAutoComplete?.progressRenderer) {
+                this.editor.modules.llmAutoComplete.progressRenderer.setLLMButtonState(model, 'error');
+            }
+            
+            logger.warn('ToolbarManager', `✗ ${model} failed: ${error.message} (${elapsed}s)`);
+        }
+    }
+    
+    /**
+     * Display core concepts in left panel
+     */
+    displayCoreConcepts(concepts, focusQuestion) {
+        // Find or create the left panel
+        let leftPanel = document.getElementById('concept-map-interaction-panel');
+        
+        if (!leftPanel) {
+            // Create left panel with blue theme (matching project colors)
+            leftPanel = document.createElement('div');
+            leftPanel.id = 'concept-map-interaction-panel';
+            leftPanel.className = 'concept-map-interaction-panel';
+            leftPanel.style.cssText = `
+                position: absolute;
+                left: 0;
+                top: 0;
+                width: 300px;
+                height: 100%;
+                background: linear-gradient(180deg, #e3f2fd 0%, #f4f6fb 100%);
+                border-right: 3px solid #4a90e2;
+                padding: 20px;
+                overflow-y: auto;
+                z-index: 100;
+                box-shadow: 2px 0 8px rgba(74,144,226,0.15);
+            `;
+            
+            // Insert before canvas panel
+            const canvasPanel = document.querySelector('.canvas-panel');
+            if (canvasPanel && canvasPanel.parentNode) {
+                canvasPanel.parentNode.insertBefore(leftPanel, canvasPanel);
+                // Adjust canvas panel width
+                canvasPanel.style.marginLeft = '300px';
+            } else {
+                // Fallback: append to editor main content
+                const mainContent = document.querySelector('.editor-main-content');
+                if (mainContent) {
+                    mainContent.insertBefore(leftPanel, mainContent.firstChild);
+                }
+            }
+        }
+        
+        // Create panel content with blue theme
+        leftPanel.innerHTML = `
+            <div style="margin-bottom: 20px;">
+                <h3 style="margin: 0 0 10px 0; color: #1565c0; font-size: 18px; font-weight: 600;">
+                    核心概念展示区
+                </h3>
+                <p style="margin: 0 0 15px 0; color: #546e7a; font-size: 14px;">
+                    焦点问题：${this.escapeHtml(focusQuestion)}
+                </p>
+                <div style="margin-bottom: 15px; padding: 10px; background: rgba(255,255,255,0.8); border-radius: 6px; border: 1px solid #90caf9;">
+                    <div style="color: #546e7a; font-size: 12px;">共生成 <strong style="color: #1565c0;">${concepts.length}</strong> 个核心概念</div>
+                    <div style="color: #90a4ae; font-size: 11px; margin-top: 4px;">💡 拖拽概念到画布添加节点</div>
+                </div>
+            </div>
+            <div id="core-concepts-list" style="display: flex; flex-direction: column; gap: 8px;">
+                ${concepts.map((concept, index) => `
+                    <div class="core-concept-item" draggable="true" style="
+                        padding: 12px;
+                        background: rgba(255,255,255,0.9);
+                        border-radius: 6px;
+                        border: 1px solid #bbdefb;
+                        cursor: grab;
+                        transition: all 0.2s;
+                        font-size: 14px;
+                        color: #333;
+                        user-select: none;
+                    " 
+                    data-concept="${this.escapeHtml(concept)}">
+                        <span style="color: #90a4ae; margin-right: 8px;">${index + 1}.</span>
+                        ${this.escapeHtml(concept)}
+                    </div>
+                `).join('')}
+            </div>
+            <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #bbdefb;">
+                <button id="close-interaction-panel" style="
+                    width: 100%;
+                    padding: 10px;
+                    background: linear-gradient(135deg, #4a90e2 0%, #1565c0 100%);
+                    color: white;
+                    border: none;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    font-size: 14px;
+                    font-weight: 600;
+                    box-shadow: 0 2px 8px rgba(74,144,226,0.3);
+                    transition: all 0.2s;
+                " onmouseover="this.style.transform='translateY(-1px)'; this.style.boxShadow='0 4px 12px rgba(74,144,226,0.4)';"
+                   onmouseout="this.style.transform='translateY(0)'; this.style.boxShadow='0 2px 8px rgba(74,144,226,0.3)';">关闭</button>
+            </div>
+        `;
+        
+        // Add close button event
+        const closeBtn = leftPanel.querySelector('#close-interaction-panel');
+        if (closeBtn) {
+            closeBtn.addEventListener('click', () => {
+                this.closeInteractionPanel();
+            });
+        }
+        
+        // Add drag events to concept items
+        const conceptItems = leftPanel.querySelectorAll('.core-concept-item');
+        conceptItems.forEach(item => {
+            // Drag start
+            item.addEventListener('dragstart', (e) => {
+                // Check if already used
+                if (e.currentTarget.classList.contains('concept-used')) {
+                    e.preventDefault();
+                    return;
+                }
+                const concept = e.currentTarget.dataset.concept;
+                e.dataTransfer.setData('text/plain', concept);
+                e.dataTransfer.setData('application/x-concept', concept);
+                e.dataTransfer.effectAllowed = 'copy';
+                e.currentTarget.style.opacity = '0.5';
+                e.currentTarget.style.cursor = 'grabbing';
+                logger.debug('ToolbarManager', 'Drag started', { concept });
+            });
+            
+            // Drag end
+            item.addEventListener('dragend', (e) => {
+                // Don't restore if already used
+                if (e.currentTarget.classList.contains('concept-used')) {
+                    return;
+                }
+                e.currentTarget.style.opacity = '1';
+                e.currentTarget.style.cursor = 'grab';
+            });
+            
+            // Hover effects
+            item.addEventListener('mouseenter', (e) => {
+                // Don't change style if already used
+                if (e.currentTarget.classList.contains('concept-used')) {
+                    return;
+                }
+                e.currentTarget.style.background = '#e3f2fd';
+                e.currentTarget.style.borderColor = '#4a90e2';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(74,144,226,0.2)';
+            });
+            
+            item.addEventListener('mouseleave', (e) => {
+                // Don't change style if already used
+                if (e.currentTarget.classList.contains('concept-used')) {
+                    return;
+                }
+                e.currentTarget.style.background = 'rgba(255,255,255,0.9)';
+                e.currentTarget.style.borderColor = '#bbdefb';
+                e.currentTarget.style.boxShadow = 'none';
+            });
+        });
+        
+        // Setup canvas drop zone
+        this.setupCanvasDropZone();
+    }
+    
+    /**
+     * Close interaction panel
+     */
+    closeInteractionPanel() {
+        const leftPanel = document.getElementById('concept-map-interaction-panel');
+        if (leftPanel) {
+            leftPanel.remove();
+            // Restore canvas panel width
+            const canvasPanel = document.querySelector('.canvas-panel');
+            if (canvasPanel) {
+                canvasPanel.style.marginLeft = '';
+            }
+        }
+        // Remove canvas drop zone listeners
+        this.removeCanvasDropZone();
+    }
+    
+    /**
+     * Setup canvas as drop zone for concept drag-and-drop
+     */
+    setupCanvasDropZone() {
+        const canvas = document.querySelector('#d3-container');
+        if (!canvas) {
+            logger.warn('ToolbarManager', 'Canvas container not found for drop zone setup');
+            return;
+        }
+        
+        // Remove existing handlers first to prevent duplicates
+        this.removeCanvasDropZone();
+        
+        // Store references for cleanup
+        this._canvasDropHandlers = {
+            dragover: (e) => {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'copy';
+                canvas.style.outline = '3px dashed #4a90e2';
+                canvas.style.outlineOffset = '-3px';
+            },
+            dragleave: (e) => {
+                canvas.style.outline = '';
+                canvas.style.outlineOffset = '';
+            },
+            drop: (e) => {
+                e.preventDefault();
+                canvas.style.outline = '';
+                canvas.style.outlineOffset = '';
+                
+                // Get dropped concept text
+                const concept = e.dataTransfer.getData('application/x-concept') || e.dataTransfer.getData('text/plain');
+                if (!concept) {
+                    logger.warn('ToolbarManager', 'No concept data in drop event');
+                    return;
+                }
+                
+                // Calculate drop position relative to SVG
+                const svg = canvas.querySelector('svg');
+                if (!svg) {
+                    logger.warn('ToolbarManager', 'SVG not found in canvas');
+                    return;
+                }
+                
+                const svgRect = svg.getBoundingClientRect();
+                let dropX = e.clientX - svgRect.left;
+                let dropY = e.clientY - svgRect.top;
+                
+                // Adjust for zoom/transform if zoom-group exists
+                const zoomGroup = svg.querySelector('g.zoom-group');
+                if (zoomGroup) {
+                    const transform = zoomGroup.getAttribute('transform');
+                    if (transform) {
+                        // Parse transform: translate(x,y) scale(s)
+                        const translateMatch = transform.match(/translate\(\s*([^,]+)\s*,\s*([^)]+)\s*\)/);
+                        const scaleMatch = transform.match(/scale\(\s*([^)]+)\s*\)/);
+                        
+                        let tx = 0, ty = 0, scale = 1;
+                        if (translateMatch) {
+                            tx = parseFloat(translateMatch[1]) || 0;
+                            ty = parseFloat(translateMatch[2]) || 0;
+                        }
+                        if (scaleMatch) {
+                            scale = parseFloat(scaleMatch[1]) || 1;
+                        }
+                        
+                        // Transform screen coordinates to SVG coordinates
+                        dropX = (dropX - tx) / scale;
+                        dropY = (dropY - ty) / scale;
+                    }
+                }
+                
+                logger.info('ToolbarManager', 'Concept dropped on canvas', { concept, x: dropX, y: dropY });
+                
+                // Add node to canvas using concept-map-renderer function
+                this.addConceptNodeToCanvas(concept, dropX, dropY);
+                
+                // Mark concept as used in the left panel
+                this.markConceptAsUsed(concept);
+            }
+        };
+        
+        canvas.addEventListener('dragover', this._canvasDropHandlers.dragover);
+        canvas.addEventListener('dragleave', this._canvasDropHandlers.dragleave);
+        canvas.addEventListener('drop', this._canvasDropHandlers.drop);
+        
+        logger.debug('ToolbarManager', 'Canvas drop zone setup complete');
+    }
+    
+    /**
+     * Remove canvas drop zone listeners
+     */
+    removeCanvasDropZone() {
+        const canvas = document.querySelector('#d3-container');
+        if (canvas && this._canvasDropHandlers) {
+            canvas.removeEventListener('dragover', this._canvasDropHandlers.dragover);
+            canvas.removeEventListener('dragleave', this._canvasDropHandlers.dragleave);
+            canvas.removeEventListener('drop', this._canvasDropHandlers.drop);
+            this._canvasDropHandlers = null;
+        }
+    }
+    
+    /**
+     * Add a concept node to canvas at specified position
+     * Uses concept-map-renderer.js addNewConceptNode pattern
+     */
+    addConceptNodeToCanvas(conceptText, x, y) {
+        // Use window.addConceptNodeAtPosition if available (from concept-map-renderer.js)
+        if (typeof window.addConceptNodeAtPosition === 'function') {
+            window.addConceptNodeAtPosition(conceptText, x, y);
+            return;
+        }
+        
+        // Fallback: call addNewNode and update the label
+        if (typeof window.addNewConceptNode === 'function') {
+            const newNode = window.addNewConceptNode();
+            if (newNode) {
+                // Update node position and label
+                const nodeGroup = document.querySelector(`[data-node-id="${newNode.id}"]`);
+                if (nodeGroup) {
+                    nodeGroup.setAttribute('transform', `translate(${x}, ${y})`);
+                    const textEl = nodeGroup.querySelector('text');
+                    if (textEl) {
+                        textEl.textContent = conceptText;
+                    }
+                }
+                // Update data
+                if (window.currentGraphData) {
+                    const node = window.currentGraphData.nodes.find(n => n.id === newNode.id);
+                    if (node) {
+                        node.x = x;
+                        node.y = y;
+                        node.label = conceptText;
+                    }
+                }
+                this.showNotification(`已添加节点: ${conceptText}`, 'success');
+            }
+            return;
+        }
+        
+        logger.error('ToolbarManager', 'No concept node creation function available');
+        this.showNotification('无法添加节点', 'error');
+    }
+    
+    /**
+     * Mark a concept as used in the left panel (green color, disabled drag)
+     */
+    markConceptAsUsed(conceptText) {
+        const leftPanel = document.getElementById('concept-map-interaction-panel');
+        if (!leftPanel) return;
+        
+        const conceptItems = leftPanel.querySelectorAll('.core-concept-item');
+        conceptItems.forEach(item => {
+            if (item.dataset.concept === conceptText) {
+                // Mark as used
+                item.classList.add('concept-used');
+                item.setAttribute('draggable', 'false');
+                item.style.background = 'linear-gradient(135deg, #d4edda 0%, #c3e6cb 100%)';
+                item.style.borderColor = '#28a745';
+                item.style.color = '#155724';
+                item.style.cursor = 'not-allowed';
+                item.style.opacity = '0.8';
+                
+                // Add checkmark icon
+                if (!item.querySelector('.concept-used-icon')) {
+                    const icon = document.createElement('span');
+                    icon.className = 'concept-used-icon';
+                    icon.style.cssText = 'margin-left: auto; color: #28a745; font-weight: bold;';
+                    icon.textContent = ' ✓';
+                    item.appendChild(icon);
+                }
+                
+                // Remove drag event listeners by cloning
+                const newItem = item.cloneNode(true);
+                item.parentNode.replaceChild(newItem, item);
+                
+                logger.debug('ToolbarManager', 'Concept marked as used', { conceptText });
+            }
+        });
+    }
+    
+    /**
+     * Escape HTML to prevent XSS
+     */
+    escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
     }
     
     // NOTE: LLM validation methods moved to PropertyValidator (property-validator.js)

@@ -325,25 +325,26 @@ function assignCoordinates(nodes, orderedLevels, width, height, links = []) {
     console.log('Sugiyama: 开始坐标分配...');
     console.log(`Sugiyama: 画布尺寸 ${width} x ${height}`);
     
-    // 布局参数 - 统一使用 100px 边距
-    const horizontalMargin = 100;
-    const focusToLayer1Spacing = 60; // 焦点问题到第一层的间距
-    const minLayerSpacing = 180; // 最小层间距
-    const minGapBetweenLayers = 50; // 相邻层节点之间的最小间隙
+    // 布局参数
+    const horizontalMargin = 50; // 左右边距
+    const focusToLayer1Spacing = 160; // 焦点问题到第一层的间距
+    const minLayerSpacing = 300; // 最小层间距（继续增大）
+    const minGapBetweenLayers = 150; // 相邻层节点之间的最小间隙（继续增大）
     
     const levelCount = orderedLevels.size;
-    const focusQuestionHeight = 60;
+    const focusQuestionHeight = 80; // 与其他地方保持一致
     
     // 计算每层节点的最大高度
     const levelHeights = new Map();
     orderedLevels.forEach((levelNodes, level) => {
-        let maxHeight = 50;
+        let maxHeight = 85; // 默认最小高度
         levelNodes.forEach(node => {
-            let nodeHeight = 50;
+            let nodeHeight = 85; // 默认高度
             if (typeof window.calculateNodeDimensions === 'function') {
-                const dims = window.calculateNodeDimensions(node.label || '', 90, 45, 20);
-                nodeHeight = node.height || dims.height;
-                node.width = node.width || dims.width;
+                // 使用默认参数（minWidth=220, minHeight=85, padding=36）来获得更大的节点尺寸
+                const dims = window.calculateNodeDimensions(node.label || '');
+                nodeHeight = dims.height;
+                node.width = dims.width;
                 node.height = nodeHeight;
             }
             maxHeight = Math.max(maxHeight, nodeHeight);
@@ -354,16 +355,17 @@ function assignCoordinates(nodes, orderedLevels, width, height, links = []) {
     // 计算动态层间距
     const layerSpacings = [];
     for (let i = 0; i < levelCount - 1; i++) {
-        const currentLevelHeight = levelHeights.get(i) || 50;
-        const nextLevelHeight = levelHeights.get(i + 1) || 50;
+        const currentLevelHeight = levelHeights.get(i) || 85;
+        const nextLevelHeight = levelHeights.get(i + 1) || 85;
         const dynamicSpacing = currentLevelHeight / 2 + minGapBetweenLayers + nextLevelHeight / 2;
         const finalSpacing = Math.max(minLayerSpacing, dynamicSpacing);
         layerSpacings.push(finalSpacing);
     }
     
-    // 关键：使用固定的起始位置，而不是根据画布高度计算
-    const focusQuestionY = 80; // 焦点问题的Y坐标
-    const layer1Y = focusQuestionY + focusQuestionHeight + focusToLayer1Spacing; // 约200
+    // 关键：使用固定的起始位置
+    // 焦点问题框中心 Y = 50，减少顶部空隙
+    const focusQuestionY = 50; // 焦点问题的Y坐标（中心点）
+    const layer1Y = focusQuestionY + focusQuestionHeight / 2 + focusToLayer1Spacing; // 焦点问题底边 + 间距
     
     console.log(`Sugiyama: 焦点问题Y=${focusQuestionY}, 第一层Y=${layer1Y}`);
     
@@ -380,6 +382,7 @@ function assignCoordinates(nodes, orderedLevels, width, height, links = []) {
     if (focusQuestionLevel) {
         const [, focusNodes] = focusQuestionLevel;
         const centerX = width / 2;
+        console.log(`Sugiyama: 焦点问题居中计算 - 画布宽度=${width}, 中心X=${centerX}`);
         focusNodes.forEach(node => {
             // 关键修复：保留已设置的宽度（来自 convertToConceptMapFormat），不要覆盖
             // 用户要求焦点问题框使用固定的很长的宽度（1400px）
@@ -396,7 +399,10 @@ function assignCoordinates(nodes, orderedLevels, width, height, links = []) {
             
             node.x = centerX;
             node.y = focusQuestionY;
-            console.log(`Sugiyama: 焦点问题节点 "${node.label}" 坐标 (${node.x.toFixed(0)}, ${node.y.toFixed(0)}), 宽度=${node.width}`);
+            // 详细日志：验证焦点问题框居中
+            const leftEdge = node.x - node.width / 2;
+            const rightEdge = node.x + node.width / 2;
+            console.log(`Sugiyama: 焦点问题节点 "${node.label.substring(0, 20)}..." 坐标 (${node.x.toFixed(0)}, ${node.y.toFixed(0)}), 宽度=${node.width}, 左边界=${leftEdge.toFixed(0)}, 右边界=${rightEdge.toFixed(0)}`);
         });
     }
     
@@ -412,30 +418,35 @@ function assignCoordinates(nodes, orderedLevels, width, height, links = []) {
         // 计算节点宽度
         const nodeWidths = levelNodes.map(node => {
             if (typeof window.calculateNodeDimensions === 'function') {
-                const dims = window.calculateNodeDimensions(node.label || '', 90, 45, 20);
-                node.width = node.width || dims.width;
-                node.height = node.height || dims.height;
+                // 使用默认参数（minWidth=220, minHeight=85, padding=36）来获得更大的节点尺寸
+                const dims = window.calculateNodeDimensions(node.label || '');
+                node.width = dims.width;
+                node.height = dims.height;
                 return node.width;
             }
-            return node.width || 100;
+            return node.width || 220;
         });
         
         const totalNodeWidth = nodeWidths.reduce((sum, w) => sum + w, 0);
         
-        // 计算间距
+        // 计算间距（增大同行节点之间的间距）
         let nodeSpacing;
         if (levelNodes.length === 1) {
             nodeSpacing = 0;
         } else if (levelNodes.length === 2) {
-            nodeSpacing = 150;
+            nodeSpacing = 280;
         } else if (levelNodes.length <= 4) {
-            nodeSpacing = 120;
+            nodeSpacing = 220;
         } else if (levelNodes.length <= 6) {
-            nodeSpacing = 80;
+            nodeSpacing = 180; // 增大
+        } else if (levelNodes.length <= 8) {
+            nodeSpacing = 150; // 增大
         } else if (levelNodes.length <= 10) {
-            nodeSpacing = 55;
+            nodeSpacing = 120; // 增大
+        } else if (levelNodes.length <= 12) {
+            nodeSpacing = 100; // 新增：12个以内
         } else {
-            nodeSpacing = Math.max(30, 50 - (levelNodes.length - 10) * 2);
+            nodeSpacing = Math.max(80, 90 - (levelNodes.length - 12) * 1); // 多节点时保持较大间距
         }
         
         const totalSpacing = (levelNodes.length - 1) * nodeSpacing;
@@ -575,7 +586,7 @@ function optimizeParentChildAlignment(nodes, links, width, horizontalMargin) {
                 node: node,
                 idealX: idealX,
                 parentCount: parentNodes.length,
-                width: node.width || 100
+                width: node.width || 220
             });
         });
         
@@ -706,7 +717,7 @@ function resolveOverlaps(nodes, nodeIdealPositions, minNodeGap, horizontalMargin
 
 /**
  * 检测聚合连接组（用于布局优化）
- * 同一源节点、同一标签的多条连接为一个聚合组
+ * 只检测标记为聚合连接的连线
  * @param {Array} links - 所有连接
  * @returns {Array} 聚合组数组，每个元素包含 {key, sourceId, label, targetIds}
  */
@@ -714,23 +725,23 @@ function detectAggregateGroupsForLayout(links) {
     const groups = new Map();
     
     links.forEach(link => {
+        // 只处理标记为聚合连接的连线
+        if (!link.isAggregated) return;
+        
         const label = link.label || '';
-        // 只对非空且有意义的连接词进行聚合
-        if (label && label.trim().length > 0 && label !== '双击编辑') {
-            const sourceId = typeof link.source === 'string' ? link.source : link.source?.id;
-            const targetId = typeof link.target === 'string' ? link.target : link.target?.id;
-            const key = `${sourceId}_${label}`;
-            
-            if (!groups.has(key)) {
-                groups.set(key, {
-                    key: key,
-                    sourceId: sourceId,
-                    label: label,
-                    targetIds: []
-                });
-            }
-            groups.get(key).targetIds.push(targetId);
+        const sourceId = typeof link.source === 'string' ? link.source : link.source?.id;
+        const targetId = typeof link.target === 'string' ? link.target : link.target?.id;
+        const key = `${sourceId}_${label}`;
+        
+        if (!groups.has(key)) {
+            groups.set(key, {
+                key: key,
+                sourceId: sourceId,
+                label: label,
+                targetIds: []
+            });
         }
+        groups.get(key).targetIds.push(targetId);
     });
     
     // 只返回有2个或更多目标的组（需要聚合）
@@ -767,7 +778,7 @@ function centerAllNodes(nodes, canvasWidth) {
         }
         
         if (node.x !== undefined) {
-            const nodeWidth = node.width || 100;
+            const nodeWidth = node.width || 220;
             minX = Math.min(minX, node.x - nodeWidth / 2);
             maxX = Math.max(maxX, node.x + nodeWidth / 2);
             conceptNodeCount++;
@@ -824,60 +835,47 @@ function adjustViewBox(nodes, baseWidth, baseHeight) {
         return;
     }
     
-    // 计算节点边界
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    
-    // 纳入焦点问题框
-    if (window.focusQuestionY !== undefined && window.focusQuestionHeight !== undefined) {
-        minY = Math.min(minY, window.focusQuestionY - 30);
+    // 检查是否只有焦点问题节点（没有其他概念节点）
+    const conceptNodes = nodes.filter(node => node.layer !== 0 && !node.isFocusQuestion);
+    if (conceptNodes.length === 0) {
+        // 只有焦点问题框，不调整 viewBox，保持默认画布尺寸
+        console.log('Sugiyama: 只有焦点问题节点，保持默认viewBox，不进行调整');
+        return;
     }
+    
+    // 计算所有节点的垂直边界（包括焦点问题节点）
+    let minY = Infinity, maxY = -Infinity;
     
     nodes.forEach(node => {
         if (node.x !== undefined && node.y !== undefined) {
-            const nodeWidth = node.width || 100;
-            const nodeHeight = node.height || 50;
-            minX = Math.min(minX, node.x - nodeWidth / 2);
+            const nodeHeight = node.height || 85;
             minY = Math.min(minY, node.y - nodeHeight / 2);
-            maxX = Math.max(maxX, node.x + nodeWidth / 2);
             maxY = Math.max(maxY, node.y + nodeHeight / 2);
         }
     });
     
-    // 添加边距
-    const horizontalMargin = 100;
-    const topMargin = 30;
-    const bottomMargin = 80;
+    // 添加边距（减少上下空隙）
+    const topMargin = 10;  // 顶部边距
+    const bottomMargin = 20; // 底部边距
     
-    // 计算内容边界（含边距）
-    const paddedMinY = minY - topMargin;
-    const paddedMaxY = maxY + bottomMargin;
-    
-    const contentHeight = paddedMaxY - paddedMinY;
-    
-    // 视口尺寸
-    // 宽度：保持与布局使用的宽度一致，确保节点居中
-    const viewWidth = baseWidth;
-    // 高度：至少为基础高度，同时覆盖所有内容
-    const viewHeight = Math.max(baseHeight, contentHeight);
-    
-    // 关键：viewBox 始终从 0 开始
-    // 因为 centerAllNodes 已经将节点居中于 baseWidth，所以 viewBoxX = 0
+    // viewBox 从内容实际开始的位置开始，减少上下空白
     const viewBoxX = 0;
-    // Y轴：确保顶部有足够空间显示焦点问题
-    const viewBoxY = Math.min(0, paddedMinY);
+    const viewBoxY = minY - topMargin;  // 从内容顶部开始，留少量边距
+    const viewWidth = baseWidth;  // 使用容器的完整宽度
+    const contentHeight = maxY - minY + topMargin + bottomMargin;
+    const viewHeight = Math.max(contentHeight, 400);  // 确保最小高度
     
-    console.log(`Sugiyama: 节点边界 X:[${minX.toFixed(0)}, ${maxX.toFixed(0)}] Y:[${minY.toFixed(0)}, ${maxY.toFixed(0)}]`);
-    console.log(`Sugiyama: 节点中心 X: ${((minX + maxX) / 2).toFixed(0)}, 画布中心 X: ${(baseWidth / 2).toFixed(0)}`);
-    console.log(`Sugiyama: ViewBox: ${viewBoxX.toFixed(0)} ${viewBoxY.toFixed(0)} ${viewWidth.toFixed(0)} ${viewHeight.toFixed(0)}`);
+    console.log(`Sugiyama: 内容垂直范围 Y:[${minY.toFixed(0)}, ${maxY.toFixed(0)}]`);
+    console.log(`Sugiyama: 画布完整宽度: ${baseWidth}, viewBox高度: ${viewHeight.toFixed(0)}`);
+    console.log(`Sugiyama: ViewBox: ${viewBoxX} ${viewBoxY} ${viewWidth} ${viewHeight.toFixed(0)}`);
     
     // 更新 SVG viewBox
     const svg = document.querySelector('#d3-container svg') || 
                 document.querySelector('.concept-graph');
     if (svg) {
         svg.setAttribute('viewBox', `${viewBoxX} ${viewBoxY} ${viewWidth} ${viewHeight}`);
-        // 保持 SVG 宽度与 viewBox 宽度一致
-        svg.setAttribute('width', viewWidth);
-        svg.setAttribute('height', viewHeight);
+        // 不设置固定的 width/height，让 CSS 的 100% 生效
+        // preserveAspectRatio: xMidYMid meet 会自动将内容居中于容器
     }
 }
 
@@ -897,25 +895,26 @@ function applySugiyamaLayout(graphData) {
     const nodes = graphData.nodes.map(n => ({ ...n }));
     const links = graphData.links.map(l => ({ ...l }));
     
-    // 获取画布尺寸 - 关键：只使用 viewBox 的宽度，确保布局与视口对齐
+    // 获取画布尺寸 - 从 viewBox 获取，viewBox 已经使用了容器的实际尺寸
     let width = 1600;
-    let height = 800; // 使用合理的默认高度
+    let height = 800;
     
     const svg = document.querySelector('#d3-container svg') || document.querySelector('.concept-graph');
     if (svg) {
         const viewBox = svg.getAttribute('viewBox');
+        console.log(`Sugiyama: 获取到的 viewBox = "${viewBox}"`);
         if (viewBox) {
             const parts = viewBox.split(' ');
             if (parts.length === 4) {
                 width = parseFloat(parts[2]) || width;
-                // 不使用 viewBox 的高度，使用固定值
+                height = parseFloat(parts[3]) || height;
             }
         }
-        // 注意：不使用 getBoundingClientRect，因为它返回的是渲染后的实际像素尺寸
-        // 而我们需要使用 viewBox 的逻辑尺寸来确保布局正确居中
+    } else {
+        console.warn('Sugiyama: 未找到 SVG 元素，使用默认宽度');
     }
     
-    console.log(`Sugiyama: 画布尺寸 ${width} x ${height}`);
+    console.log(`Sugiyama: 画布尺寸 ${width} x ${height}, 焦点问题框将居中于 x=${width/2}`);
     
     // 执行算法
     const levels = assignLayers(nodes, links);
@@ -974,3 +973,4 @@ if (typeof window !== 'undefined') {
     window.centerAllNodes = centerAllNodes;
     console.log('✅ Sugiyama布局算法已注册到全局作用域');
 }
+

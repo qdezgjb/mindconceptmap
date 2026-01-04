@@ -16,6 +16,7 @@ import os
 import time
 import asyncio
 import uuid
+import re
 from pathlib import Path
 import aiofiles
 import httpx
@@ -36,6 +37,8 @@ from models import (
     RecalculateLayoutRequest,
     FeedbackRequest,
     FocusQuestionGenerateRequest,
+    GenerateCoreConceptsRequest,
+    GenerateLinkLabelRequest,
     Messages,
     get_request_language
 )
@@ -338,6 +341,267 @@ async def generate_concept_map_from_focus_question(
         raise
     except Exception as e:
         logger.error(f"[{request_id}] Error generating concept map from focus question: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=Messages.error("generation_failed", lang, str(e))
+        )
+
+
+# ============================================================================
+# CORE CONCEPTS GENERATION
+# ============================================================================
+
+@router.post('/generate_core_concepts')
+async def generate_core_concepts(
+    req: GenerateCoreConceptsRequest,
+    x_language: str = None,
+    current_user: Optional[User] = Depends(get_current_user_or_api_key)
+):
+    """
+    Generate core concepts related to a focus question.
+    
+    Returns a list of core concepts (typically 30) that are relevant to the focus question.
+    """
+    
+    language = req.language.value if hasattr(req.language, 'value') else str(req.language)
+    llm_model = req.llm.value if hasattr(req.llm, 'value') else str(req.llm)
+    lang = get_request_language(x_language, language)
+    
+    request_id = str(uuid.uuid4())
+    logger.info(f"[{request_id}] Core concepts generation request, focus question: {req.focus_question[:50]}...")
+    
+    try:
+        # Calculate concept distribution: 1 summary + 4 dimensions + remaining concepts per dimension
+        num_dimensions = 4
+        remaining_count = req.count - 1 - num_dimensions  # Total - summary - dimensions
+        concepts_per_dimension = remaining_count // num_dimensions
+        
+        # Build prompt for generating structured core concepts
+        if language == 'zh':
+            system_prompt = "你是一个专业的知识分析专家，擅长从焦点问题中提取核心概念并进行多维度分析。请按照指定的结构生成核心概念列表。"
+            prompt = f"""请根据以下焦点问题，生成{req.count}个结构化的核心概念。
+
+焦点问题：{req.focus_question}
+
+生成要求（严格按照以下结构）：
+
+【第1个概念】焦点问题的核心主题总结
+- 从焦点问题中提取核心主题，用简洁的名词短语表示
+- 例如：焦点问题"辛亥革命的背景是什么" → 总结为"辛亥革命的背景"
+- 例如：焦点问题"气候变化的影响有哪些" → 总结为"气候变化的影响"
+
+【第2-5个概念】问题的4个分析维度
+- 根据焦点问题的性质，生成4个适合的分析维度
+- 维度应该是并列的、互不重叠的分类角度
+- 例如：历史背景问题 → 政治方面、经济方面、思想方面、社会方面
+- 例如：科学问题 → 原理层面、应用层面、发展层面、影响层面
+- 例如：社会问题 → 原因分析、现状描述、影响评估、解决对策
+
+【第6-{req.count}个概念】各维度下的具体概念
+- 将剩余的{remaining_count}个概念平均分配到4个维度中
+- 每个维度约{concepts_per_dimension}个具体概念
+- 概念应该是简洁明确的名词或名词短语
+- 同一维度的概念应该连续排列
+
+输出格式：
+- 直接返回概念列表，每行一个概念
+- 不要编号，不要标题，不要其他说明
+- 按照：总结 → 维度1 → 维度2 → 维度3 → 维度4 → 维度1的概念 → 维度2的概念 → 维度3的概念 → 维度4的概念 的顺序排列
+
+核心概念列表："""
+        else:
+            system_prompt = "You are a professional knowledge analyst expert at extracting core concepts and conducting multi-dimensional analysis. Please generate a structured list of core concepts according to the specified format."
+            prompt = f"""Please generate {req.count} structured core concepts based on the following focus question.
+
+Focus Question: {req.focus_question}
+
+Generation Requirements (strictly follow this structure):
+
+【Concept 1】Core theme summary of the focus question
+- Extract the core theme from the focus question as a concise noun phrase
+- Example: "What is the background of the Xinhai Revolution" → "Background of the Xinhai Revolution"
+- Example: "What are the impacts of climate change" → "Impacts of Climate Change"
+
+【Concepts 2-5】4 analytical dimensions of the question
+- Generate 4 appropriate analytical dimensions based on the nature of the focus question
+- Dimensions should be parallel and non-overlapping classification perspectives
+- Example: Historical background → Political aspect, Economic aspect, Ideological aspect, Social aspect
+- Example: Scientific question → Principle level, Application level, Development level, Impact level
+- Example: Social issue → Cause analysis, Current status, Impact assessment, Solutions
+
+【Concepts 6-{req.count}】Specific concepts under each dimension
+- Distribute the remaining {remaining_count} concepts evenly across the 4 dimensions
+- Approximately {concepts_per_dimension} specific concepts per dimension
+- Each concept should be a concise noun or noun phrase
+- Concepts under the same dimension should be listed consecutively
+
+Output Format:
+- Return the concept list directly, one concept per line
+- No numbering, no titles, no other explanations
+- Order: Summary → Dimension1 → Dimension2 → Dimension3 → Dimension4 → Dimension1's concepts → Dimension2's concepts → Dimension3's concepts → Dimension4's concepts
+
+Core Concepts List:"""
+        
+        # Call LLM (pass user context for token tracking)
+        user_id = current_user.id if current_user else None
+        organization_id = current_user.organization_id if current_user else None
+        
+        response_text = await llm_service.chat(
+            prompt=prompt,
+            model=llm_model,
+            system_message=system_prompt,
+            temperature=0.7,
+            max_tokens=1000,
+            user_id=user_id,
+            organization_id=organization_id,
+            request_type='concept_generation',
+            endpoint_path='/api/generate_core_concepts'
+        )
+        
+        if not response_text:
+            raise ValueError("No response from LLM")
+        
+        # Parse response into concept list
+        concepts = []
+        for line in response_text.strip().split('\n'):
+            line = line.strip()
+            # Remove numbering if present (e.g., "1. ", "1)", "- ", etc.)
+            line = re.sub(r'^[\d\.\)\-\*\+\•]\s*', '', line)
+            if line and len(line) <= 50:  # Reasonable concept length
+                concepts.append(line)
+        
+        # Ensure we have the requested number of concepts
+        if len(concepts) < req.count:
+            logger.warning(f"[{request_id}] Generated only {len(concepts)} concepts, requested {req.count}")
+        
+        # Limit to requested count
+        concepts = concepts[:req.count]
+        
+        logger.info(f"[{request_id}] Successfully generated {len(concepts)} core concepts")
+        
+        return {
+            'success': True,
+            'concepts': concepts,
+            'count': len(concepts),
+            'request_id': request_id
+        }
+        
+    except Exception as e:
+        logger.error(f"[{request_id}] Error generating core concepts: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500,
+            detail=Messages.error("generation_failed", lang, str(e))
+        )
+
+
+# ============================================================================
+# LINK LABEL GENERATION
+# ============================================================================
+
+@router.post('/generate_link_label')
+async def generate_link_label(
+    req: GenerateLinkLabelRequest,
+    x_language: str = None,
+    current_user: Optional[User] = Depends(get_current_user_or_api_key)
+):
+    """
+    Generate a link label (relationship word) between two concepts using LLM.
+    
+    Returns a concise relationship word that describes how the source concept
+    relates to the target concept.
+    """
+    
+    language = req.language.value if hasattr(req.language, 'value') else str(req.language)
+    llm_model = req.llm.value if hasattr(req.llm, 'value') else str(req.llm)
+    lang = get_request_language(x_language, language)
+    
+    request_id = str(uuid.uuid4())
+    logger.info(f"[{request_id}] Link label generation: {req.source_concept} -> {req.target_concept}")
+    
+    try:
+        # Build prompt for generating link label
+        if language == 'zh':
+            system_prompt = "你是一个专业的知识分析专家，擅长分析概念之间的关系。请用简洁的动词或短语描述两个概念之间的关系。"
+            
+            context_hint = ""
+            if req.focus_question:
+                context_hint = f"\n背景问题：{req.focus_question}"
+            
+            prompt = f"""请分析以下两个概念之间的关系，并给出一个简洁的连接词（动词或动词短语）来描述它们的关系。
+{context_hint}
+源概念：{req.source_concept}
+目标概念：{req.target_concept}
+
+要求：
+1. 连接词应该是2-6个字的动词或动词短语
+2. 连接词应该能够清晰地表达从源概念到目标概念的关系方向
+3. 例如：包含、导致、属于、促进、依赖、影响、组成、产生、需要、决定等
+4. 只返回连接词本身，不要有任何其他说明或标点符号
+
+连接词："""
+        else:
+            system_prompt = "You are a professional knowledge analyst expert at analyzing relationships between concepts. Please describe the relationship between two concepts using a concise verb or phrase."
+            
+            context_hint = ""
+            if req.focus_question:
+                context_hint = f"\nContext: {req.focus_question}"
+            
+            prompt = f"""Please analyze the relationship between the following two concepts and provide a concise linking word (verb or verb phrase) to describe their relationship.
+{context_hint}
+Source concept: {req.source_concept}
+Target concept: {req.target_concept}
+
+Requirements:
+1. The linking word should be 1-4 words (verb or verb phrase)
+2. It should clearly express the directional relationship from source to target
+3. Examples: contains, causes, belongs to, promotes, depends on, affects, consists of, produces, requires, determines, etc.
+4. Return only the linking word itself, without any other explanation or punctuation
+
+Linking word:"""
+        
+        # Call LLM
+        user_id = current_user.id if current_user else None
+        organization_id = current_user.organization_id if current_user else None
+        
+        response_text = await llm_service.chat(
+            prompt=prompt,
+            model=llm_model,
+            system_message=system_prompt,
+            temperature=0.3,  # Lower temperature for more consistent output
+            max_tokens=50,    # Short response expected
+            user_id=user_id,
+            organization_id=organization_id,
+            request_type='link_label_generation',
+            endpoint_path='/api/generate_link_label'
+        )
+        
+        if not response_text:
+            raise ValueError("No response from LLM")
+        
+        # Clean up response - extract just the link label
+        link_label = response_text.strip()
+        # Remove any punctuation and extra content
+        link_label = link_label.split('\n')[0].strip()
+        link_label = link_label.strip('。.，,：:"""\'\'"\'')
+        
+        # Limit length
+        if len(link_label) > 20:
+            link_label = link_label[:20]
+        
+        # Default fallback
+        if not link_label:
+            link_label = "相关" if language == 'zh' else "relates to"
+        
+        logger.info(f"[{request_id}] Generated link label: {link_label}")
+        
+        return {
+            'success': True,
+            'link_label': link_label,
+            'request_id': request_id
+        }
+        
+    except Exception as e:
+        logger.error(f"[{request_id}] Error generating link label: {e}", exc_info=True)
         raise HTTPException(
             status_code=500,
             detail=Messages.error("generation_failed", lang, str(e))

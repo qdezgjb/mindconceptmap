@@ -391,9 +391,11 @@ class ToolbarResponsiveManager {
                         // - flow-map-orientation-btn: only for flow_map
                         // - add-focus-btn: only for concept_map
                         // - clear-canvas-btn: only for concept_map
+                        // - interaction-btn: only for concept_map
                         if (btn.id === 'flow-map-orientation-btn' || 
                             btn.id === 'add-focus-btn' || 
-                            btn.id === 'clear-canvas-btn') {
+                            btn.id === 'clear-canvas-btn' ||
+                            btn.id === 'interaction-btn') {
                             return;
                         }
                         btn.style.display = '';
@@ -453,9 +455,11 @@ class ToolbarResponsiveManager {
             // - flow-map-orientation-btn: only for flow_map
             // - add-focus-btn: only for concept_map
             // - clear-canvas-btn: only for concept_map
+            // - interaction-btn: only for concept_map
             if (btn.id === 'flow-map-orientation-btn' || 
                 btn.id === 'add-focus-btn' || 
-                btn.id === 'clear-canvas-btn') {
+                btn.id === 'clear-canvas-btn' ||
+                btn.id === 'interaction-btn') {
                 return;
             }
             btn.style.display = '';
@@ -491,9 +495,11 @@ class ToolbarResponsiveManager {
                 // - flow-map-orientation-btn: only for flow_map
                 // - add-focus-btn: only for concept_map
                 // - clear-canvas-btn: only for concept_map
+                // - interaction-btn: only for concept_map
                 if (btn.id === 'flow-map-orientation-btn' || 
                     btn.id === 'add-focus-btn' || 
-                    btn.id === 'clear-canvas-btn') {
+                    btn.id === 'clear-canvas-btn' ||
+                    btn.id === 'interaction-btn') {
                     return;
                 }
                 btn.style.display = '';

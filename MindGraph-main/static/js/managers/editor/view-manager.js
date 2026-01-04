@@ -431,10 +431,17 @@ class ViewManager {
         const addFocusBtn = document.getElementById('add-focus-btn');
         const addNodeBtn = document.getElementById('add-node-btn');
         const editGroupLabel = document.getElementById('edit-group-label');
+        const interactionBtn = document.getElementById('interaction-btn');
         
         // Get translations
         const lang = window.languageManager?.getCurrentLanguage() || 'zh';
         const translations = window.languageManager?.translations?.[lang] || {};
+        
+        // CRITICAL: Always hide interaction button first, then show only for concept_map
+        // This ensures the button is hidden for all other diagram types (including null/undefined)
+        if (interactionBtn) {
+            interactionBtn.style.setProperty('display', 'none', 'important');
+        }
         
         if (diagramType === 'concept_map') {
             // Hide redo button for concept maps (concept maps only support undo)
@@ -456,6 +463,11 @@ class ViewManager {
             if (addFocusBtn) {
                 addFocusBtn.style.setProperty('display', 'inline-flex', 'important');
                 this.logger.debug('ViewManager', 'Add focus button shown for concept map');
+            }
+            // Show interaction button for concept maps
+            if (interactionBtn) {
+                interactionBtn.style.setProperty('display', 'inline-flex', 'important');
+                this.logger.debug('ViewManager', 'Interaction button shown for concept map');
             }
             // Update add node button text for concept maps
             if (addNodeBtn) {
@@ -482,6 +494,11 @@ class ViewManager {
             // Hide add focus button for other diagram types
             if (addFocusBtn) {
                 addFocusBtn.style.setProperty('display', 'none', 'important');
+            }
+            // Hide interaction button for other diagram types
+            if (interactionBtn) {
+                interactionBtn.style.setProperty('display', 'none', 'important');
+                this.logger.debug('ViewManager', 'Interaction button hidden for non-concept-map diagram');
             }
             // Restore add node button text for other diagram types
             if (addNodeBtn) {
@@ -683,6 +700,15 @@ class ViewManager {
      * @param {boolean} reserveForPanel - Whether to reserve space for properties panel (320px)
      */
     _fitToCanvas(animate, reserveForPanel) {
+        // 概念图使用 Sugiyama 布局，已经正确设置了 viewBox
+        // 跳过自动调整以避免焦点问题框位置跳动
+        const currentDiagramType = window.interactiveEditor?.diagramType || 
+                                   window.currentDiagramType;
+        if (currentDiagramType === 'concept_map') {
+            this.logger.debug('ViewManager', 'Skipping fit for concept_map - Sugiyama layout already set viewBox');
+            return;
+        }
+        
         // Skip if Node Palette is active (d3-container is hidden)
         // Use PanelManager instead of direct DOM check
         if (window.panelManager?.isPanelOpen('nodePalette')) {
@@ -836,6 +862,15 @@ class ViewManager {
      */
     autoFitDiagramIfNeeded() {
         try {
+            // 概念图使用 Sugiyama 布局，已经正确设置了 viewBox
+            // 跳过自动调整以避免焦点问题框位置跳动
+            const currentDiagramType = window.interactiveEditor?.diagramType || 
+                                       window.currentDiagramType;
+            if (currentDiagramType === 'concept_map') {
+                this.logger.debug('ViewManager', 'Skipping auto-fit for concept_map - Sugiyama layout already set viewBox');
+                return;
+            }
+            
             const container = d3.select('#d3-container');
             const svg = container.select('svg');
             
@@ -922,6 +957,15 @@ class ViewManager {
      */
     fitDiagramToWindow() {
         try {
+            // 概念图使用 Sugiyama 布局，已经正确设置了 viewBox
+            // 跳过自动调整以避免焦点问题框位置变化
+            const currentDiagramType = window.interactiveEditor?.diagramType || 
+                                       window.currentDiagramType;
+            if (currentDiagramType === 'concept_map') {
+                this.logger.debug('ViewManager', 'Skipping fitDiagramToWindow for concept_map - Sugiyama layout already set viewBox');
+                return;
+            }
+            
             // Skip if Node Palette is active (d3-container is hidden)
             // Use PanelManager instead of direct DOM check
             if (window.panelManager?.isPanelOpen('nodePalette')) {

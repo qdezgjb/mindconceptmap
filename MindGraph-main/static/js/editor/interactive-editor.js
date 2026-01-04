@@ -294,6 +294,12 @@ class InteractiveEditor {
                     }
                     this.diagramType = data.diagramType;
                 }
+                // Skip re-render if the operation module already updated DOM directly
+                // (e.g., concept maps use independent rendering system)
+                if (data.skipRender) {
+                    logger.debug('InteractiveEditor', 'Skipping re-render - DOM already updated directly');
+                    return;
+                }
                 this.renderDiagram();
             };
             this.eventBus.onWithOwner('diagram:node_updated', this.eventBusListeners.nodeUpdated, this.ownerId);
@@ -1850,8 +1856,9 @@ class InteractiveEditor {
         }
         
         // Select all - Allow Ctrl+A in inputs, but prevent on canvas
+        // Skip for concept_map - concept-map-renderer.js handles Ctrl+A with proper styling
         if (event.ctrlKey && event.key === 'a') {
-            if (!isTyping) {
+            if (!isTyping && this.diagramType !== 'concept_map') {
                 event.preventDefault();
                 this.selectAll();
             }

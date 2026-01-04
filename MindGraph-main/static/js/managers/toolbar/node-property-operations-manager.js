@@ -49,7 +49,12 @@ class NodePropertyOperationsManager {
      * ARCHITECTURE: Uses State Manager as primary source, falls back to toolbarManager if needed
      */
     getSelectedNodes() {
-        // Try State Manager first (source of truth)
+        // Check multi-select mode first (Ctrl+A)
+        if (window.propertyPanelManager?.isMultiSelectMode && window.propertyPanelManager?.selectedNodeIds?.length > 0) {
+            return window.propertyPanelManager.selectedNodeIds;
+        }
+        
+        // Try State Manager (source of truth)
         if (this.stateManager && typeof this.stateManager.getDiagramState === 'function') {
             const diagramState = this.stateManager.getDiagramState();
             const selectedNodes = diagramState?.selectedNodes || [];
@@ -88,11 +93,32 @@ class NodePropertyOperationsManager {
     }
     
     /**
-     * Apply all properties to selected nodes
+     * Apply all properties to selected nodes or link
      * EXTRACTED FROM: toolbar-manager.js lines 780-870
      */
     applyAllProperties() {
         if (!this.toolbarManager) return;
+        
+        // Check if we're in multi-link mode
+        if (window.propertyPanelManager?.isMultiSelectMode && window.propertyPanelManager?.selectedLinkIds?.length > 0) {
+            this.logger.debug('NodePropertyOperationsManager', 'Applying properties to multiple links');
+            this.applyMultiLinkProperties();
+            return;
+        }
+        
+        // Check if we're in multi-node mode
+        if (window.propertyPanelManager?.isMultiSelectMode && window.propertyPanelManager?.selectedNodeIds?.length > 0) {
+            this.logger.debug('NodePropertyOperationsManager', 'Applying properties to multiple nodes');
+            // Continue with normal flow but don't apply text
+        }
+        
+        // Check if we're in link mode (PropertyPanelManager handles link selection)
+        if (window.propertyPanelManager?.isLinkMode && window.propertyPanelManager?.currentLinkId) {
+            this.logger.debug('NodePropertyOperationsManager', 'Applying link properties (link mode)');
+            window.propertyPanelManager.applyLinkProperties();
+            this.toolbarManager.showNotification(this.toolbarManager.getNotif('propertiesApplied'), 'success');
+            return;
+        }
         
         const selectedNodes = this.getSelectedNodes();
         if (selectedNodes.length === 0) return;
@@ -117,13 +143,33 @@ class NodePropertyOperationsManager {
         });
         
         // Apply text changes first using the proper method (silently - we'll show one notification at the end)
-        if (properties.text && properties.text.trim()) {
+        // Skip text in multi-select mode (batch editing)
+        if (!window.propertyPanelManager?.isMultiSelectMode && properties.text && properties.text.trim()) {
             this.toolbarManager.applyText(true); // Pass true to suppress notification
         }
         
         selectedNodes.forEach(nodeId => {
             const nodeElement = d3.select(`[data-node-id="${nodeId}"]`);
             if (nodeElement.empty()) return;
+            
+            // Determine the actual shape element to apply fill/stroke properties
+            // For concept maps, nodeElement is a <g> group, so we need to find the shape inside
+            let shapeElement = nodeElement;
+            const nodeTagName = nodeElement.node()?.tagName?.toLowerCase();
+            if (nodeTagName === 'g') {
+                // Concept map structure: <g data-node-id="xxx"><rect/><text/></g>
+                // Find the rect or other shape element inside
+                const rectInGroup = nodeElement.select('rect');
+                if (!rectInGroup.empty()) {
+                    shapeElement = rectInGroup;
+                } else {
+                    // Try circle or ellipse as fallback
+                    const circleInGroup = nodeElement.select('circle, ellipse');
+                    if (!circleInGroup.empty()) {
+                        shapeElement = circleInGroup;
+                    }
+                }
+            }
             
             // Find ALL text elements for this node using selectAll (for multi-line text support)
             let textElements = d3.selectAll(`text[data-node-id="${nodeId}"]`);
@@ -139,28 +185,34 @@ class NodePropertyOperationsManager {
                 }
             }
             
-            // Apply shape properties
+            // Apply shape properties to the actual shape element (rect/circle/etc)
             if (properties.fillColor) {
-                nodeElement.attr('fill', properties.fillColor);
+                shapeElement.attr('fill', properties.fillColor);
             }
             if (properties.strokeColor) {
-                nodeElement.attr('stroke', properties.strokeColor);
+                shapeElement.attr('stroke', properties.strokeColor);
                 // CRITICAL: Also update data-original-stroke so SelectionManager
                 // restores the NEW value when deselecting, not the old one
-                if (nodeElement.attr('data-original-stroke')) {
-                    nodeElement.attr('data-original-stroke', properties.strokeColor);
+                if (shapeElement.attr('data-original-stroke')) {
+                    shapeElement.attr('data-original-stroke', properties.strokeColor);
                 }
             }
             if (properties.strokeWidth) {
-                nodeElement.attr('stroke-width', properties.strokeWidth);
+                shapeElement.attr('stroke-width', properties.strokeWidth);
                 // Also update data-original-stroke-width
-                if (nodeElement.attr('data-original-stroke-width')) {
-                    nodeElement.attr('data-original-stroke-width', properties.strokeWidth);
+                if (shapeElement.attr('data-original-stroke-width')) {
+                    shapeElement.attr('data-original-stroke-width', properties.strokeWidth);
                 }
             }
             // Use explicit null/undefined check to allow opacity 0 (fully transparent)
+            // Apply opacity to the group element for concept maps so the whole node becomes transparent
             if (properties.opacity !== null && properties.opacity !== undefined && properties.opacity !== '') {
-                nodeElement.attr('opacity', properties.opacity);
+                if (nodeTagName === 'g') {
+                    // Apply opacity to group so both shape and text are affected
+                    nodeElement.attr('opacity', properties.opacity);
+                } else {
+                    shapeElement.attr('opacity', properties.opacity);
+                }
             }
             
             // Apply text styling properties to ALL text elements (not content - that's handled by applyText)
@@ -190,6 +242,9 @@ class NodePropertyOperationsManager {
                 if (properties.strikethrough) decorations.push('line-through');
                 textElements.attr('text-decoration', decorations.length > 0 ? decorations.join(' ') : 'none');
             }
+            
+            // 保存样式到节点数据中，以便重新渲染时保留
+            this.saveNodeStyleToData(nodeId, properties);
         });
         
         this.editor?.saveToHistory('update_properties', { 
@@ -206,6 +261,31 @@ class NodePropertyOperationsManager {
      */
     applyStylesRealtime() {
         if (!this.toolbarManager) return;
+        
+        // Check if we're in multi-link mode
+        if (window.propertyPanelManager?.isMultiSelectMode && window.propertyPanelManager?.selectedLinkIds?.length > 0) {
+            // Apply to all selected links
+            if (typeof this.toolbarManager.applyLinkStylesRealtime === 'function') {
+                const linkIds = window.propertyPanelManager.selectedLinkIds;
+                linkIds.forEach(linkId => {
+                    // Temporarily set currentLinkId for applyLinkStylesRealtime
+                    const originalLinkId = window.propertyPanelManager.currentLinkId;
+                    window.propertyPanelManager.currentLinkId = linkId;
+                    this.toolbarManager.applyLinkStylesRealtime();
+                    window.propertyPanelManager.currentLinkId = originalLinkId;
+                });
+            }
+            return;
+        }
+        
+        // Check if we're in link mode (PropertyPanelManager handles link selection)
+        if (window.propertyPanelManager?.isLinkMode && window.propertyPanelManager?.currentLinkId) {
+            // Delegate to ToolbarManager's applyLinkStylesRealtime for link mode
+            if (typeof this.toolbarManager.applyLinkStylesRealtime === 'function') {
+                this.toolbarManager.applyLinkStylesRealtime();
+            }
+            return;
+        }
         
         const selectedNodes = this.getSelectedNodes();
         if (selectedNodes.length === 0) return;
@@ -229,28 +309,45 @@ class NodePropertyOperationsManager {
             const nodeElement = d3.select(`[data-node-id="${nodeId}"]`);
             if (nodeElement.empty()) return;
             
-            // Apply shape properties
-            if (properties.fillColor) {
-                nodeElement.attr('fill', properties.fillColor);
-            }
-            if (properties.strokeColor) {
-                nodeElement.attr('stroke', properties.strokeColor);
-                // CRITICAL: Also update data-original-stroke so SelectionManager
-                // restores the NEW value when deselecting, not the old one
-                if (nodeElement.attr('data-original-stroke')) {
-                    nodeElement.attr('data-original-stroke', properties.strokeColor);
+            // Determine the actual shape element to apply fill/stroke properties
+            // For concept maps, nodeElement is a <g> group, so we need to find the shape inside
+            let shapeElement = nodeElement;
+            const nodeTagName = nodeElement.node()?.tagName?.toLowerCase();
+            if (nodeTagName === 'g') {
+                // Concept map structure: <g data-node-id="xxx"><rect/><text/></g>
+                // Find the rect or other shape element inside
+                const rectInGroup = nodeElement.select('rect');
+                if (!rectInGroup.empty()) {
+                    shapeElement = rectInGroup;
+                } else {
+                    // Try circle or ellipse as fallback
+                    const circleInGroup = nodeElement.select('circle, ellipse');
+                    if (!circleInGroup.empty()) {
+                        shapeElement = circleInGroup;
+                    }
                 }
             }
+            
+            // NOTE: fillColor and strokeColor are applied directly by ToolbarManager.applyColorToNode()
+            // when user selects from color palette. This prevents cross-contamination between color types.
+            // Colors are only applied here when using applyAllProperties() (Apply button).
+            
             if (properties.strokeWidth) {
-                nodeElement.attr('stroke-width', properties.strokeWidth);
+                shapeElement.attr('stroke-width', properties.strokeWidth);
                 // Also update data-original-stroke-width
-                if (nodeElement.attr('data-original-stroke-width')) {
-                    nodeElement.attr('data-original-stroke-width', properties.strokeWidth);
+                if (shapeElement.attr('data-original-stroke-width')) {
+                    shapeElement.attr('data-original-stroke-width', properties.strokeWidth);
                 }
             }
             // Use explicit null/undefined check to allow opacity 0 (fully transparent)
+            // Apply opacity to the group element for concept maps so the whole node becomes transparent
             if (properties.opacity !== null && properties.opacity !== undefined && properties.opacity !== '') {
-                nodeElement.attr('opacity', properties.opacity);
+                if (nodeTagName === 'g') {
+                    // Apply opacity to group so both shape and text are affected
+                    nodeElement.attr('opacity', properties.opacity);
+                } else {
+                    shapeElement.attr('opacity', properties.opacity);
+                }
             }
             
             // Find ALL text elements for this node using selectAll (for multi-line text support)
@@ -286,6 +383,9 @@ class NodePropertyOperationsManager {
                 if (properties.strikethrough) decorations.push('line-through');
                 textElements.attr('text-decoration', decorations.length > 0 ? decorations.join(' ') : 'none');
             }
+            
+            // 保存样式到节点数据中，以便重新渲染时保留
+            this.saveNodeStyleToData(nodeId, properties);
         });
         
         // Save to history silently
@@ -301,6 +401,12 @@ class NodePropertyOperationsManager {
      */
     resetStyles() {
         if (!this.toolbarManager) return;
+        
+        // Check if we're in link mode
+        if (window.propertyPanelManager?.isLinkMode && window.propertyPanelManager?.currentLinkId) {
+            this.resetLinkStyles();
+            return;
+        }
         
         const selectedNodes = this.getSelectedNodes();
         if (selectedNodes.length === 0) return;
@@ -373,6 +479,111 @@ class NodePropertyOperationsManager {
         };
         
         return typeSpecificDefaults[diagramType] || standardDefaults;
+    }
+    
+    /**
+     * Reset link styles to defaults
+     */
+    resetLinkStyles() {
+        if (!this.toolbarManager) return;
+        
+        const linkId = window.propertyPanelManager?.currentLinkId;
+        if (!linkId) return;
+        
+        // Default link styles
+        const defaultLinkStyles = {
+            textColor: '#333333',
+            lineColor: '#aaaaaa',
+            lineWidth: '2',
+            opacity: '1',
+            fontSize: '24',
+            fontFamily: 'Inter, sans-serif',
+            fontWeight: 'normal',
+            fontStyle: 'normal',
+            textDecoration: 'none'
+        };
+        
+        // Update UI inputs to defaults
+        if (this.toolbarManager.propLinkTextColor) {
+            this.toolbarManager.propLinkTextColor.value = defaultLinkStyles.textColor;
+        }
+        if (this.toolbarManager.propLinkLineColor) {
+            this.toolbarManager.propLinkLineColor.value = defaultLinkStyles.lineColor;
+        }
+        if (this.toolbarManager.propLinkLineWidth) {
+            this.toolbarManager.propLinkLineWidth.value = defaultLinkStyles.lineWidth;
+        }
+        if (this.toolbarManager.linkLineWidthValue) {
+            this.toolbarManager.linkLineWidthValue.textContent = `${defaultLinkStyles.lineWidth}px`;
+        }
+        if (this.toolbarManager.propOpacity) {
+            this.toolbarManager.propOpacity.value = defaultLinkStyles.opacity;
+        }
+        if (this.toolbarManager.opacityValue) {
+            this.toolbarManager.opacityValue.textContent = '100%';
+        }
+        if (this.toolbarManager.propFontSize) {
+            this.toolbarManager.propFontSize.value = defaultLinkStyles.fontSize;
+        }
+        if (this.toolbarManager.propFontFamily) {
+            this.toolbarManager.propFontFamily.value = defaultLinkStyles.fontFamily;
+        }
+        
+        // Reset style toggles
+        this.toolbarManager.propBold?.classList.remove('active');
+        this.toolbarManager.propItalic?.classList.remove('active');
+        this.toolbarManager.propUnderline?.classList.remove('active');
+        this.toolbarManager.propStrikethrough?.classList.remove('active');
+        
+        // Update color previews
+        if (this.toolbarManager.previewLinkTextColor) {
+            this.toolbarManager.previewLinkTextColor.style.backgroundColor = defaultLinkStyles.textColor;
+        }
+        if (this.toolbarManager.previewLinkLineColor) {
+            this.toolbarManager.previewLinkLineColor.style.backgroundColor = defaultLinkStyles.lineColor;
+        }
+        
+        // Apply to link via global function
+        if (typeof window.updateLinkStyle === 'function') {
+            window.updateLinkStyle(linkId, defaultLinkStyles);
+        }
+        
+        this.toolbarManager.showNotification(
+            window.languageManager?.getCurrentLanguage() === 'zh' 
+                ? '连线样式已重置' 
+                : 'Link styles reset to defaults',
+            'success'
+        );
+    }
+    
+    /**
+     * Apply properties to multiple selected links (batch mode)
+     * NOTE: In multi-select mode, each property change is already applied in real-time
+     * via applyLinkPropertyOnly. This method only needs to confirm the changes.
+     * We only apply properties that the user has explicitly interacted with (tracked via data attributes).
+     */
+    applyMultiLinkProperties() {
+        if (!this.toolbarManager) return;
+        
+        const linkIds = window.propertyPanelManager?.selectedLinkIds || [];
+        if (linkIds.length === 0) return;
+        
+        // In multi-select mode, changes are already applied in real-time.
+        // The "Apply" button serves as confirmation.
+        // We don't re-apply all UI values because that would overwrite previously saved values
+        // with potentially uninitialized UI defaults.
+        
+        this.toolbarManager.showNotification(
+            window.languageManager?.getCurrentLanguage() === 'zh' 
+                ? `已确认 ${linkIds.length} 条连线的样式` 
+                : `Confirmed styles for ${linkIds.length} links`,
+            'success'
+        );
+        
+        this.logger.debug('NodePropertyOperationsManager', 'Applied styles to multiple links', { 
+            count: linkIds.length, 
+            styles 
+        });
     }
     
     /**
@@ -596,6 +807,41 @@ class NodePropertyOperationsManager {
         this.editor = null;
         this.toolbarManager = null;
         this.logger = null;
+    }
+    
+    /**
+     * 保存节点样式到数据中，以便重新渲染时保留
+     */
+    saveNodeStyleToData(nodeId, properties) {
+        if (!window.currentGraphData || !window.currentGraphData.nodes) return;
+        
+        const node = window.currentGraphData.nodes.find(n => n.id === nodeId);
+        if (!node) return;
+        
+        // 保存形状样式
+        if (properties.fillColor) node.fillColor = properties.fillColor;
+        if (properties.strokeColor) node.strokeColor = properties.strokeColor;
+        if (properties.strokeWidth) node.strokeWidth = properties.strokeWidth;
+        if (properties.opacity !== null && properties.opacity !== undefined && properties.opacity !== '') {
+            node.opacity = properties.opacity;
+        }
+        
+        // 保存文字样式
+        if (properties.fontSize) node.fontSize = properties.fontSize;
+        if (properties.fontFamily) node.fontFamily = properties.fontFamily;
+        if (properties.textColor) node.textColor = properties.textColor;
+        if (properties.bold !== undefined) node.fontWeight = properties.bold ? 'bold' : 'normal';
+        if (properties.italic !== undefined) node.fontStyle = properties.italic ? 'italic' : 'normal';
+        
+        // 保存文字装饰
+        const decorations = [];
+        if (properties.underline) decorations.push('underline');
+        if (properties.strikethrough) decorations.push('line-through');
+        if (decorations.length > 0 || properties.underline !== undefined || properties.strikethrough !== undefined) {
+            node.textDecoration = decorations.length > 0 ? decorations.join(' ') : 'none';
+        }
+        
+        this.logger.debug('NodePropertyOperationsManager', 'Saved node style to data', { nodeId, properties });
     }
 }
 

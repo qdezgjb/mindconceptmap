@@ -243,64 +243,68 @@ class ConceptMapOperations {
             return null;
         }
         
-        // Find the concept by matching text from the DOM
-        const shapeElement = d3.select(`[data-node-id="${nodeId}"]`);
-        if (shapeElement.empty()) {
+        // Find the node element by data-node-id
+        const nodeElement = d3.select(`[data-node-id="${nodeId}"]`);
+        if (nodeElement.empty()) {
             this.logger.warn('ConceptMapOperations', `Node not found: ${nodeId}`);
             return spec;
         }
         
-        // Find associated text to match with spec
-        const parentGroup = shapeElement.node()?.parentNode;
+        // Determine if nodeElement is a <g> group (concept map structure)
+        const nodeTagName = nodeElement.node()?.tagName?.toLowerCase();
+        const isGroupElement = nodeTagName === 'g';
+        
+        // Find the text element(s) for this node
+        let textElement = null;
         let nodeText = '';
         
         // First, try to get text from data-concept-text attribute (most reliable)
-        const storedText = shapeElement.attr('data-concept-text');
+        const storedText = nodeElement.attr('data-concept-text');
         if (storedText) {
             nodeText = storedText;
-        } else if (parentGroup && parentGroup.tagName === 'g') {
-            // For concept maps, text elements are siblings within the same group
-            // Collect all text elements in the group
-            const textElements = d3.select(parentGroup).selectAll('text[data-node-id="' + nodeId + '"]');
-            if (!textElements.empty()) {
-                // Extract text from all text elements (concept maps use multiple text elements for multi-line)
-                const textLines = [];
-                textElements.each(function() {
-                    const lineText = d3.select(this).text();
-                    if (lineText) textLines.push(lineText);
-                });
-                nodeText = textLines.join('\n');
-            } else {
-                // Fallback: try first text element in group
-                const textElement = d3.select(parentGroup).select('text');
-                if (!textElement.empty()) {
-                    // Use extractTextFromSVG to properly read tspan content
-                    nodeText = (typeof window.extractTextFromSVG === 'function')
-                        ? window.extractTextFromSVG(textElement)
-                        : textElement.text();
-                }
-            }
-        } else {
-            // Try to find text element by data-text-for attribute
-            const textElement = d3.select(`[data-text-for="${nodeId}"]`);
-            if (!textElement.empty()) {
+        }
+        
+        if (isGroupElement) {
+            // Concept map structure: <g data-node-id="xxx"><rect/><text/></g>
+            // Find text element inside the group
+            textElement = nodeElement.select('text');
+            if (!textElement.empty() && !nodeText) {
                 // Use extractTextFromSVG to properly read tspan content
                 nodeText = (typeof window.extractTextFromSVG === 'function')
                     ? window.extractTextFromSVG(textElement)
                     : textElement.text();
+            }
+        } else {
+            // Other structures: text is sibling or has data-text-for attribute
+            const textByDataAttr = d3.select(`[data-text-for="${nodeId}"]`);
+            if (!textByDataAttr.empty()) {
+                textElement = textByDataAttr;
+                if (!nodeText) {
+                    nodeText = (typeof window.extractTextFromSVG === 'function')
+                        ? window.extractTextFromSVG(textElement)
+                        : textElement.text();
+                }
             } else {
-                // Try to find all text elements with same data-node-id
-                const textElements = d3.selectAll(`text[data-node-id="${nodeId}"]`);
-                if (!textElements.empty()) {
-                    const textLines = [];
-                    textElements.each(function() {
-                        const lineText = d3.select(this).text();
-                        if (lineText) textLines.push(lineText);
-                    });
-                    nodeText = textLines.join('\n');
+                // Try next sibling
+                const shapeNode = nodeElement.node();
+                if (shapeNode.nextElementSibling && shapeNode.nextElementSibling.tagName === 'text') {
+                    textElement = d3.select(shapeNode.nextElementSibling);
+                    if (!nodeText) {
+                        nodeText = (typeof window.extractTextFromSVG === 'function')
+                            ? window.extractTextFromSVG(textElement)
+                            : textElement.text();
+                    }
                 }
             }
         }
+        
+        this.logger.debug('ConceptMapOperations', 'updateNode - found elements', {
+            nodeId,
+            isGroupElement,
+            hasTextElement: textElement && !textElement.empty(),
+            nodeText: nodeText?.substring(0, 50),
+            newText: updates.text?.substring(0, 50)
+        });
         
         // Initialize node dimensions metadata if it doesn't exist
         if (!spec._node_dimensions) {
@@ -309,11 +313,23 @@ class ConceptMapOperations {
         
         // Find the concept in spec and update it
         if (nodeText && updates.text !== undefined) {
-            // Check if this is the topic node
-            if (nodeText === spec.topic) {
-                // Update topic
+            // Check if this is the focus question / topic node
+            // Focus question node has special format: "焦点问题：{topic}" or node id is 'focus-question-node'
+            const isFocusQuestionNode = nodeId === 'focus-question-node' || 
+                                        nodeText.startsWith('焦点问题：') || 
+                                        nodeText.startsWith('焦点问题:');
+            
+            if (isFocusQuestionNode || nodeText === spec.topic) {
+                // Update topic/focus question
                 const oldText = spec.topic;
-                spec.topic = updates.text;
+                // Extract the actual topic text (remove prefix if present in the new text)
+                let newTopicText = updates.text;
+                if (newTopicText.startsWith('焦点问题：')) {
+                    newTopicText = newTopicText.substring('焦点问题：'.length);
+                } else if (newTopicText.startsWith('焦点问题:')) {
+                    newTopicText = newTopicText.substring('焦点问题:'.length);
+                }
+                spec.topic = newTopicText;
                 
                 // Update connections that reference the topic
                 if (Array.isArray(spec.connections)) {
@@ -345,16 +361,24 @@ class ConceptMapOperations {
                 }
                 
                 // Update data-concept-text attribute in DOM
-                if (!shapeElement.empty()) {
-                    shapeElement.attr('data-concept-text', updates.text);
-                    const parentGroup = shapeElement.node()?.parentNode;
-                    if (parentGroup && parentGroup.tagName === 'g') {
-                        d3.select(parentGroup).selectAll(`text[data-node-id="${nodeId}"]`)
-                            .attr('data-concept-text', updates.text);
+                if (!nodeElement.empty()) {
+                    nodeElement.attr('data-concept-text', newTopicText);
+                }
+                
+                // CRITICAL: Actually update the DOM text content
+                // For focus question node, display the full format with prefix
+                if (textElement && !textElement.empty()) {
+                    const displayText = isFocusQuestionNode ? `焦点问题：${newTopicText}` : newTopicText;
+                    textElement.text(displayText);
+                    this.logger.debug('ConceptMapOperations', 'Updated topic text in DOM', { displayText });
+                    
+                    // Also update window.focusQuestion for focus question node
+                    if (isFocusQuestionNode) {
+                        window.focusQuestion = newTopicText;
                     }
                 }
                 
-                this.logger.debug('ConceptMapOperations', `Updated topic from "${oldText}" to "${updates.text}"`);
+                this.logger.debug('ConceptMapOperations', `Updated topic from "${oldText}" to "${newTopicText}"`);
             } else {
                 // Find concept in concepts array
                 // Concepts can be strings or objects with text property
@@ -381,9 +405,9 @@ class ConceptMapOperations {
                     const oldText = typeof concept === 'string' ? concept : concept.text;
                     
                     // Check if we should preserve dimensions (when emptying node)
-                    const preservedWidth = shapeElement.attr('data-preserved-width');
-                    const preservedHeight = shapeElement.attr('data-preserved-height');
-                    const preservedRadius = shapeElement.attr('data-preserved-radius');
+                    const preservedWidth = nodeElement.attr('data-preserved-width');
+                    const preservedHeight = nodeElement.attr('data-preserved-height');
+                    const preservedRadius = nodeElement.attr('data-preserved-radius');
                     
                     if ((preservedWidth && preservedHeight || preservedRadius) && updates.text === '') {
                         // Use the old text as key since we're updating it
@@ -413,14 +437,14 @@ class ConceptMapOperations {
                     }
                     
                     // Update data-concept-text attribute in DOM for future matching
-                    if (!shapeElement.empty()) {
-                        shapeElement.attr('data-concept-text', updates.text);
-                        // Also update text elements in the parent group
-                        const parentGroup = shapeElement.node()?.parentNode;
-                        if (parentGroup && parentGroup.tagName === 'g') {
-                            d3.select(parentGroup).selectAll(`text[data-node-id="${nodeId}"]`)
-                                .attr('data-concept-text', updates.text);
-                        }
+                    if (!nodeElement.empty()) {
+                        nodeElement.attr('data-concept-text', updates.text);
+                    }
+                    
+                    // CRITICAL: Actually update the DOM text content
+                    if (textElement && !textElement.empty()) {
+                        textElement.text(updates.text);
+                        this.logger.debug('ConceptMapOperations', 'Updated concept text in DOM');
                     }
                     
                     // Update connections that reference this concept
@@ -488,12 +512,15 @@ class ConceptMapOperations {
             updates
         });
         
-        // Emit node updated event
+        // Emit node updated event with skipRender flag
+        // Concept maps use independent rendering system, DOM is already updated directly
+        // We don't want to trigger full re-render which would lose layout
         this.eventBus.emit('diagram:node_updated', {
             diagramType: 'concept_map',
             nodeId,
             updates,
-            spec
+            spec,
+            skipRender: true  // CRITICAL: Don't re-render the entire diagram
         });
         
         // Emit operation completed for history

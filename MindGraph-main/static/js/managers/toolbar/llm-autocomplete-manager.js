@@ -214,8 +214,21 @@ class LLMAutoCompleteManager {
             const language = this._detectLanguage(mainTopic);
             
             // SPECIAL HANDLING: For concept_map, use focus question generation workflow
-            if (currentDiagramType === 'concept_map' && window.focusQuestion) {
-                return await this.handleConceptMapFocusQuestionGeneration(window.focusQuestion, language);
+            if (currentDiagramType === 'concept_map') {
+                // 清空除焦点问题框外的所有节点，并获取当前焦点问题内容
+                let focusQuestion = window.focusQuestion;
+                
+                if (typeof window.clearConceptMapExceptFocus === 'function') {
+                    const currentFocusContent = window.clearConceptMapExceptFocus();
+                    if (currentFocusContent) {
+                        focusQuestion = currentFocusContent;
+                        this.logger.info('LLMAutoCompleteManager', 'Cleared concept map and got focus question from DOM:', focusQuestion);
+                    }
+                }
+                
+                if (focusQuestion) {
+                    return await this.handleConceptMapFocusQuestionGeneration(focusQuestion, language);
+                }
             }
             
             // Build request - always use continue mode (canvas already has minimal template)

@@ -24,6 +24,8 @@ from .requests import (
     RecalculateLayoutRequest,
     FeedbackRequest,
     FocusQuestionGenerateRequest,
+    GenerateCoreConceptsRequest,
+    GenerateLinkLabelRequest,
 )
 
 from .responses import (
@@ -53,6 +55,8 @@ __all__ = [
     "RecalculateLayoutRequest",
     "FeedbackRequest",
     "FocusQuestionGenerateRequest",
+    "GenerateCoreConceptsRequest",
+    "GenerateLinkLabelRequest",
     # Responses
     "GenerateResponse",
     "ErrorResponse",

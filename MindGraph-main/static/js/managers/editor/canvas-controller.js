@@ -183,6 +183,15 @@ class CanvasController {
      */
     fitDiagramToWindow(animate = false) {
         try {
+            // 概念图使用 Sugiyama 布局，已经正确设置了 viewBox
+            // 跳过自动调整以避免焦点问题框位置变化
+            const currentDiagramType = window.interactiveEditor?.diagramType || 
+                                       window.currentDiagramType;
+            if (currentDiagramType === 'concept_map') {
+                this.logger.debug('CanvasController', 'Skipping fit for concept_map - Sugiyama layout already set viewBox');
+                return;
+            }
+            
             // Skip if Node Palette is active (d3-container is hidden)
             // Use PanelManager instead of direct DOM check
             if (window.panelManager?.isPanelOpen('nodePalette')) {
@@ -372,6 +381,15 @@ class CanvasController {
      */
     checkAutoFitNeeded() {
         try {
+            // 概念图使用 Sugiyama 布局，已经正确设置了 viewBox
+            // 跳过自动调整以避免焦点问题框位置变化
+            const currentDiagramType = window.interactiveEditor?.diagramType || 
+                                       window.currentDiagramType;
+            if (currentDiagramType === 'concept_map') {
+                this.logger.debug('CanvasController', 'Skipping auto-fit for concept_map - Sugiyama layout already set viewBox');
+                return;
+            }
+            
             // Skip if Node Palette is active (d3-container is hidden)
             // Use PanelManager instead of direct DOM check
             if (window.panelManager?.isPanelOpen('nodePalette')) {

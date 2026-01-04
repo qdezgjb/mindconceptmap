@@ -153,6 +153,44 @@ class FocusQuestionGenerateRequest(BaseModel):
         }
 
 
+class GenerateCoreConceptsRequest(BaseModel):
+    """Request model for /api/generate_core_concepts endpoint"""
+    focus_question: str = Field(..., min_length=1, max_length=500, description="Focus question for generating core concepts")
+    language: Language = Field(Language.ZH, description="Language for processing")
+    llm: LLMModel = Field(LLMModel.QWEN, description="LLM model to use for generation")
+    count: int = Field(30, ge=1, le=100, description="Number of core concepts to generate")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "focus_question": "什么是人工智能",
+                "language": "zh",
+                "llm": "qwen",
+                "count": 30
+            }
+        }
+
+
+class GenerateLinkLabelRequest(BaseModel):
+    """Request model for /api/generate_link_label endpoint"""
+    source_concept: str = Field(..., min_length=1, max_length=200, description="Source concept/node label")
+    target_concept: str = Field(..., min_length=1, max_length=200, description="Target concept/node label")
+    focus_question: Optional[str] = Field(None, max_length=500, description="Optional focus question for context")
+    language: Language = Field(Language.ZH, description="Language for processing")
+    llm: LLMModel = Field(LLMModel.QWEN, description="LLM model to use for generation")
+    
+    class Config:
+        json_schema_extra = {
+            "example": {
+                "source_concept": "光合作用",
+                "target_concept": "叶绿体",
+                "focus_question": "光合作用的过程",
+                "language": "zh",
+                "llm": "qwen"
+            }
+        }
+
+
 class AIAssistantRequest(BaseModel):
     """Request model for /api/ai_assistant/stream endpoint (SSE)"""
     message: str = Field(

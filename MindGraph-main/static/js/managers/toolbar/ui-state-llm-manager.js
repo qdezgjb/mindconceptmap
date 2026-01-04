@@ -419,23 +419,31 @@ class UIStateLLMManager {
         this.logger.info('UIStateLLMManager', '=== LLM MODEL BUTTON CLICKED ===', {
             timestamp: new Date().toISOString(),
             clickedModel: llmModel,
-            previousModel: selectedLLM,
-            modelState: {
-                hasCachedResult: !!llmResults[llmModel],
-                isSuccess: llmResults[llmModel]?.success || false,
-                hasError: !!(llmResults[llmModel]?.error),
-                errorMessage: llmResults[llmModel]?.error || null
-            },
-            systemState: {
-                isGeneratingMulti: this.editor?.modules?.llmAutoComplete?.isGeneratingMulti,
-                totalCachedModels: Object.keys(llmResults).length
-            },
-            allModelsStatus: Object.keys(llmResults).map(model => ({
-                model: model,
-                success: llmResults[model].success,
-                error: llmResults[model].error || null
-            }))
+            previousModel: selectedLLM
         });
+        
+        // Check if we have core concept results to switch (for concept map interaction)
+        const coreConceptResults = this.toolbarManager?.coreConceptResults;
+        if (coreConceptResults && coreConceptResults[llmModel]) {
+            if (coreConceptResults[llmModel].success) {
+                // Switch to this model's core concepts
+                this.toolbarManager.selectedConceptModel = llmModel;
+                const focusText = window.focusQuestion?.replace(/^焦点问题[：:]/, '').trim() || '';
+                this.toolbarManager.displayCoreConcepts(coreConceptResults[llmModel].concepts, focusText);
+                
+                // Highlight selected model
+                if (this.editor?.modules?.llmAutoComplete?.progressRenderer) {
+                    this.editor.modules.llmAutoComplete.progressRenderer.highlightSelectedModel(llmModel);
+                }
+                
+                this.logger.info('UIStateLLMManager', `Switched to ${llmModel} core concepts (${coreConceptResults[llmModel].concepts.length} items)`);
+                return;
+            } else {
+                // Show error for this model
+                this.toolbarManager.showNotification(`${llmModel} 生成失败: ${coreConceptResults[llmModel].error}`, 'error');
+                return;
+            }
+        }
         
         // Check if this LLM has cached results
         if (llmResults[llmModel]) {

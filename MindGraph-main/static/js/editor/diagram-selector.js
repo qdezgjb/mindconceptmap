@@ -563,6 +563,10 @@ class DiagramSelector {
                 logger.error('DiagramSelector', 'ViewManager module not found after initialization');
             }
             
+            // CRITICAL: Expose PropertyPanelManager globally for link mode support
+            // This allows NodePropertyOperationsManager and ToolbarManager to check isLinkMode
+            window.propertyPanelManager = window.currentEditor.modules.propertyPanel;
+            
             // Day 2: LLM Auto-Complete Module (needs reference to llmValidation for synchronous calls)
             window.currentEditor.modules.llmAutoComplete = window.sessionLifecycle.register(
                 new LLMAutoCompleteManager(
